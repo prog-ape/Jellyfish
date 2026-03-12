@@ -1,29 +1,35 @@
-import React from 'react'
-import { Card, Button, Tag, Statistic, Row, Col, Progress, Space } from 'antd'
+import { Card, Button, Tag, Statistic, Row, Col, Progress, Space, Spin } from 'antd'
 import { RiseOutlined, VideoCameraOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
-import type { Chapter, Project } from '../../../../../mocks/data'
 import { chapterStatusMap } from '../constants'
 import type { TabKey } from '../constants'
 import { getChapterStudioPath, getProjectChaptersPath, getProjectEditorPath } from '../routes'
+import { useProject, useChapters } from '../hooks/useProjectData'
 
-export function DashboardTab({
-  project,
-  chapters,
-  latestChapter,
-  onSelectTab,
-}: {
-  project: Project
-  chapters: Chapter[]
-  latestChapter: Chapter | undefined
-  onSelectTab: (tab: TabKey) => void
-}) {
+export function DashboardTab({ onSelectTab }: { onSelectTab: (tab: TabKey) => void }) {
   const navigate = useNavigate()
   const { projectId } = useParams<{ projectId: string }>()
+  const { project, loading: projectLoading } = useProject(projectId)
+  const { chapters, loading: chaptersLoading } = useChapters(projectId)
+
+  const loading = projectLoading || chaptersLoading
+  const incompleteChapters = chapters.filter((c) => c.status !== 'done')
+  const latestChapter = chapters.find((c) => c.status === 'shooting') ?? incompleteChapters[0]
+
+  if (loading && !project) {
+    return (
+      <div className="flex justify-center items-center py-16">
+        <Spin size="large" tip="加载中…" />
+      </div>
+    )
+  }
+  if (!project) {
+    return null
+  }
 
   const totalShots = chapters.reduce((s, c) => s + c.storyboardCount, 0)
   const completedShots = Math.round((totalShots * project.progress) / 100)
-  const incompleteCount = chapters.filter((c) => c.status !== 'done').length
+  const incompleteCount = incompleteChapters.length
 
   return (
     <div className="space-y-6">
