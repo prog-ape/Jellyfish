@@ -1,84 +1,107 @@
-# Jellyfish AI Short Drama Studio
+# Jellyfish — AI Short Drama Studio
 
 <p align="center">
-  <img src="./logo.svg" alt="Jellyfish Logo" width="160" />
+  <img src="./img/logo.svg" alt="Jellyfish Logo" width="160" />
 </p>
 
 <p align="center">
-  <a href="./README.md">简体中文</a> ·
+  <a href="../README.md">简体中文</a> ·
   <a href="./README.en.md">English</a>
 </p>
 
 An end-to-end production tool for AI-generated short dramas (vertical / micro drama).  
-From script input → storyboard extraction → character/scene/prop consistency management → AI video generation → post-production editing → one-click export.
+From script input → smart storyboarding → character/scene/prop consistency management → AI video generation → post-production editing → one-click export.
 
 ## 📷 Screenshots
 
 | Project overview | Asset management |
 | --- | --- |
-| <img src="./static/img/docs/project.png" alt="Project overview" width="420" /> | <img src="./static/img/docs/%E8%B5%84%E4%BA%A7%E7%AE%A1%E7%90%86.png" alt="Asset management" width="420" /> |
+| <img src="./img/project.png" alt="Project overview" width="420" /> | <img src="./img/资产管理.png" alt="Asset management" width="420" /> |
 
-## ✨ Core Value
+## ✨ Core value
 
-- **Consistency first**: global seed + unified style + asset reuse, tackling the #1 pain point in AI generation—character/scene drift
-- **Industrialized workflow**: from a narrative script to shootable storyboards, then to video clips—an end-to-end closed loop
-- **Visual & controllable**: WYSIWYG storyboard editor + fine-grained cinematography controls + real-time preview
-- **Asset reuse system**: full lifecycle management of characters/scenes/props/costumes/prompt templates
+- **Consistency first**: Global seed + unified style + asset reuse to address the main pain of AI generation—character and scene drift.
+- **Industrialized workflow**: From narrative script to shootable storyboards to video clips in one closed loop.
+- **Visual & controllable**: WYSIWYG storyboard editor + fine-grained shot controls + real-time preview.
+- **Asset reuse system**: Full lifecycle management for characters, scenes, props, costumes, and prompt templates.
 
-## 🚀 Key Features
+## 🚀 Key features
 
 | Module | Core capabilities | Highlights |
-| --- | --- | --- |
-| Project management | Create projects, unified global style/seed, dashboards, chapter stats | Global seed to reduce drift, enforced style inheritance |
-| Chapter production workspace | Script input → smart condense → storyboard extraction → storyboard editing → video generation → preview | Three-column layout, collapsible right panel, batch ops |
+|--------|-------------------|------------|
+| Project management | Create projects, global style/seed control, project dashboard, chapter stats | Global seed to reduce drift, enforced style inheritance |
+| Chapter production workspace | Script input → smart condense → storyboard extraction → storyboard edit → video generation → preview | Three-column layout, collapsible right panel, batch operations |
 | Storyboard fine controls | Shot size/angle/movement/emotion/duration/atmosphere/dialog/music/SFX/hidden shots | Separate prompts for first/last/key frames, multi-version management |
-| Advanced generation controls | Reference images across shots, ControlNet (pose/depth), lip-sync, model & duration selection | Controllable motion + lip-sync |
-| Asset management | Centralized character/scene/prop/costume management, smart extraction + manual linking + prompt templates | Dual-layer: per-project vs global asset library |
-| Prompt template library | Templates for storyboard/character/scene/video/music/SFX/composite prompts | One-click bootstrap for new chapters |
-| Post-production editing | Timeline editing, multi-track video/audio, drag-drop asset bin, final export | Edit full episodes directly from AI clips |
-| Agent workflows | Custom agents (plot extraction / character extraction / storyboard suggestions), visual orchestration & testing | Node-based workflow editor (Dify-like) |
-| Model management | Multi-provider management (OpenAI/Claude/Tongyi/Hunyuan...), model categories (text/image/video) | Per-category defaults, quick connection tests |
-| Generated media management | Unified preview for images/videos, tagging, filtering, batch export | Reuse high-quality assets efficiently |
+| Advanced generation controls | Reference images across shots, ControlNet pose/depth, lip-sync, model & duration selection | Controllable motion + lip-sync |
+| Asset management | Centralized characters/scenes/props/costumes, smart extraction + manual linking + prompt templates | Per-project vs global asset library |
+| Prompt template library | Storyboard/character/scene/video/music/SFX/composite prompt templates | One-click init for new chapters |
+| Post-production editing | Timeline editing, multi-track video/audio, asset bin drag-drop, final export | Edit full short dramas directly from AI clips |
+| Agent workflows | Custom agents (plot/character extraction, storyboard suggestions), visual orchestration & testing | Node-based workflow editor (Dify-like) |
+| Model management | Multi-provider (OpenAI/Claude/Tongyi/Hunyuan, etc.), model types (text/image/video) | Per-type default model, quick connection test |
+| Generated media management | Unified image/video preview, tagging, filtering, batch export | Reuse high-quality assets quickly |
 
-## 🎯 Use Cases
+## 🎯 Use cases
 
-- Short drama / micro-drama creators
-- AI film studios producing at scale
-- Solo creators testing vertical dramas on a budget
-- Education & training teams producing teaching videos
-- Brands / e-commerce teams creating story-driven product promos
+- Short / micro-drama content creators
+- AI film studios for batch production
+- Solo creators exploring vertical short drama on a budget
+- Education and training teams making teaching videos
+- Brands and e-commerce creating story-driven product promos
 
-## 🛠 Tech Stack (Example)
+## 🛠 Tech stack (example)
 
 - Frontend: React 18 + TypeScript + Vite + Ant Design / Tailwind CSS
 - State: Redux Toolkit / Zustand
 - Workflow editor: React Flow
 - Video player: Video.js / Plyr
 - Rich text / code editor: Monaco Editor / React Quill
-- Backend (optional open-source part): Node.js / NestJS / FastAPI / Spring Boot
-- AI layer: multiple model APIs (OpenAI / Anthropic / Midjourney / Runway / Kling / Luma, etc.)
+- Backend (optional open-source): Node.js / NestJS / FastAPI / Spring Boot
+- AI layer: Multiple model APIs (OpenAI / Anthropic / Midjourney / Runway / Kling / Luma, etc.)
 
-## 🚧 Current Status
+## 🔁 Frontend OpenAPI client & type generation
 
-Prototype in planning:
+Request helpers and types are generated from the backend OpenAPI spec. Output directory: `front/src/services/generated/`. Cached spec: `front/openapi.json`.
 
-- [x] Project creation & global settings
-- [x] Core chapter workspace
-- [x] Asset & prompt template management
-- [x] Storyboard fine editing & video generation controls
-- [ ] Full post-production timeline (in progress)
-- [ ] Visual Agent orchestration (partially done)
-- [ ] Multi-model provider management (in progress)
-- [ ] Mobile adaptation (planned)
+With the backend dev server running (default `http://127.0.0.1:8000`), from the frontend directory run:
+
+```bash
+cd front
+pnpm run openapi:update
+```
+
+Notes:
+
+- `openapi:update` fetches `http://127.0.0.1:8000/openapi.json` into `front/openapi.json`, then generates code under `front/src/services/generated/`.
+- To change the API base URL (default same-origin `/api`), call `initOpenAPI('http://127.0.0.1:8000')` at app bootstrap; see `front/src/services/openapi.ts`.
+
+## 🚧 Development status / Roadmap
+
+The project is **actively developed**. Below is the current completion and planned work. Feedback and contributions via [Issues](https://github.com/your-org/jellyfish/issues) are welcome.
+
+### ✅ Done
+
+| Module | Description |
+|--------|-------------|
+| Model management UI | Model list, filters, and config UI are in place |
+| Project management UI | Project create/edit and dashboard flows are wired |
+| Project workspace UI | Project-level workspace layout and basic actions |
+| Chapter production workspace UI | Chapter production screens and interactions |
+| Model management | Multi-provider, multi-type model management and default config |
+| Project management | Project CRUD, global style and seed configuration |
+
+### 🚧 In progress / Planned
+
+| Module | Description |
+|--------|-------------|
+| Chapter production workspace | Full storyboard editing, video generation, and preview (deepening features) |
+| Advanced prompts | Advanced prompt templates and smart fill for storyboard/character/scene (planned) |
 
 ## 📄 License
 
-Apache-2.0 license
+This project is licensed under [Apache-2.0](../LICENSE).  
+Pull requests, issues, and stars are welcome. We aim to turn this into a practical, industry-ready tool for AI short drama production.
 
-PRs, issues, and stars are welcome.  
-Also welcome collaborators who want to build an industry-leading AI short drama production tool together.
+## 💬 Community & feedback
 
-## 💬 Community & Feedback
-
-- GitHub Issues
-- WeChat group / Discord (TBD)
+- **[GitHub Issues](https://github.com/your-org/jellyfish/issues)** — Feature ideas, bug reports, and discussions
+- **WeChat / Discord** — To be set up; links will be added here later
