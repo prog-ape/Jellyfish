@@ -6,8 +6,6 @@ import base64
 import os
 import uuid
 from pathlib import Path
-from typing import Literal
-
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,12 +41,15 @@ async def create_file_from_url_or_b64(
     b64_data: str | None = None,
     name: str | None = None,
     prefix: str = "files",
+    url_request_headers: dict[str, str] | None = None,
+    httpx_timeout: float | None = None,
 ) -> FileItem:
     """从远端 URL 或 base64 内容创建 FileItem。
 
     - 若提供 url：会先下载内容，推断 content_type 和后缀；
     - 若提供 b64_data：优先解析 data URL 前缀中的 MIME 类型，否则默认 image/png；
     - 始终通过 storage.upload_file 上传到对象存储，再创建 FileItem 记录并返回。
+    - url_request_headers / httpx_timeout：用于需鉴权或大文件下载（如 OpenAI /videos/{id}/content）。
     """
     if not url and not b64_data:
         raise ValueError("create_file_from_url_or_b64 需要提供 url 或 b64_data 至少其一")
@@ -58,8 +59,11 @@ async def create_file_from_url_or_b64(
     filename: str = ""
 
     if url:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url)
+        client_kwargs: dict = {}
+        if httpx_timeout is not None:
+            client_kwargs["timeout"] = httpx_timeout
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            resp = await client.get(url, headers=url_request_headers or None)
             resp.raise_for_status()
             content = resp.content
             content_type = resp.headers.get("Content-Type")

@@ -345,7 +345,8 @@ const ChapterStudio: React.FC = () => {
 
       setShots(enriched)
 
-      if (!selectedShotId) {
+      const selectedExists = selectedShotId ? enriched.some((s) => s.id === selectedShotId) : false
+      if (!selectedShotId || !selectedExists) {
         const firstUnfinished = enriched.find((s) => !s.hidden && s.status !== 'ready')
         const firstVisible = enriched.find((s) => !s.hidden)
         setSelectedShotId((firstUnfinished ?? firstVisible ?? enriched[0])?.id ?? null)
@@ -354,6 +355,46 @@ const ChapterStudio: React.FC = () => {
       message.error('加载分镜失败')
     } finally {
       setLoadingShots(false)
+    }
+  }
+
+  const patchShotInList = (shotId: string, patch: Partial<StudioShot>) => {
+    setShots((prev) => prev.map((s) => (s.id === shotId ? { ...s, ...patch } : s)))
+  }
+
+  const updateShotTitleInOps = async (shotId: string, title: string) => {
+    try {
+      const res = await StudioShotsService.updateShotApiV1StudioShotsShotIdPatch({
+        shotId,
+        requestBody: { title },
+      } as any)
+      if (res.data) patchShotInList(shotId, res.data as any)
+      message.success('标题已保存')
+    } catch {
+      message.error('保存标题失败')
+    }
+  }
+
+  const updateShotScriptExcerptInOps = async (shotId: string, script_excerpt: string) => {
+    try {
+      const res = await StudioShotsService.updateShotApiV1StudioShotsShotIdPatch({
+        shotId,
+        requestBody: { script_excerpt },
+      } as any)
+      if (res.data) patchShotInList(shotId, res.data as any)
+      message.success('备注已保存')
+    } catch {
+      message.error('保存备注失败')
+    }
+  }
+
+  const deleteShotFromOps = async (shotId: string) => {
+    try {
+      await StudioShotsService.deleteShotApiV1StudioShotsShotIdDelete({ shotId })
+      await loadShots()
+      message.success('已删除')
+    } catch {
+      message.error('删除失败')
     }
   }
 
@@ -1735,6 +1776,9 @@ const ChapterStudio: React.FC = () => {
                 onUpdatePromptActors={updatePromptActors}
                 selectedShot={selectedShot}
                 allShots={shots}
+                onUpdateShotTitle={updateShotTitleInOps}
+                onUpdateShotScriptExcerpt={updateShotScriptExcerptInOps}
+                onDeleteShotOps={deleteShotFromOps}
                 generating={generating}
                 onPatchShotDetail={patchShotDetailLocal}
                 onPatchShotDetailImmediate={patchShotDetailImmediate}
@@ -1792,6 +1836,9 @@ const ChapterStudio: React.FC = () => {
                     onUpdatePromptActors={updatePromptActors}
                     selectedShot={selectedShot}
                     allShots={shots}
+                    onUpdateShotTitle={updateShotTitleInOps}
+                    onUpdateShotScriptExcerpt={updateShotScriptExcerptInOps}
+                    onDeleteShotOps={deleteShotFromOps}
                     generating={generating}
                     onPatchShotDetail={patchShotDetailLocal}
                     onPatchShotDetailImmediate={patchShotDetailImmediate}
@@ -1863,6 +1910,9 @@ function Inspector(props: {
   onUpdatePromptActors: (actorIds: string[]) => Promise<void>
   selectedShot: StudioShot | null
   allShots: StudioShot[]
+  onUpdateShotTitle: (shotId: string, title: string) => Promise<void>
+  onUpdateShotScriptExcerpt: (shotId: string, script_excerpt: string) => Promise<void>
+  onDeleteShotOps: (shotId: string) => Promise<void>
   generating: boolean
   onGenerate: () => void
   onClose: () => void
@@ -1884,6 +1934,9 @@ function Inspector(props: {
     onUpdatePromptActors,
     selectedShot,
     allShots,
+    onUpdateShotTitle,
+    onUpdateShotScriptExcerpt,
+    onDeleteShotOps,
     generating,
     onGenerate,
     onClose,
@@ -1906,6 +1959,10 @@ function Inspector(props: {
   const [inspectorTabKey, setInspectorTabKey] = useState('camera')
   const [sceneNameMap, setSceneNameMap] = useState<Record<string, string>>({})
   const [characterNameMap, setCharacterNameMap] = useState<Record<string, string>>({})
+  const [opsTitleDraft, setOpsTitleDraft] = useState('')
+  const [opsNoteDraft, setOpsNoteDraft] = useState('')
+  const opsTitleSaveTimerRef = useRef<number | null>(null)
+  const opsNoteSaveTimerRef = useRef<number | null>(null)
   const [keyframeCards, setKeyframeCards] = useState<Record<PromptFrameType, KeyframeCardState>>({
     first: { loading: false, taskStatus: null, taskId: null, thumbs: [], modalOpen: false, applyingFileId: null },
     key: { loading: false, taskStatus: null, taskId: null, thumbs: [], modalOpen: false, applyingFileId: null },
@@ -1919,6 +1976,63 @@ function Inspector(props: {
   useEffect(() => {
     setRelatedShotId(undefined)
   }, [selectedShot?.id])
+
+  useEffect(() => {
+    setOpsTitleDraft(selectedShot?.title ?? '')
+    setOpsNoteDraft(selectedShot?.script_excerpt ?? '')
+    if (opsTitleSaveTimerRef.current) window.clearTimeout(opsTitleSaveTimerRef.current)
+    if (opsNoteSaveTimerRef.current) window.clearTimeout(opsNoteSaveTimerRef.current)
+    opsTitleSaveTimerRef.current = null
+    opsNoteSaveTimerRef.current = null
+  }, [selectedShot?.id])
+
+  useEffect(() => {
+    if (!selectedShot?.id) return
+    if (opsTitleDraft === (selectedShot.title ?? '')) return
+
+    if (opsTitleSaveTimerRef.current) window.clearTimeout(opsTitleSaveTimerRef.current)
+    opsTitleSaveTimerRef.current = window.setTimeout(() => {
+      void onUpdateShotTitle(selectedShot.id, opsTitleDraft)
+      opsTitleSaveTimerRef.current = null
+    }, 500)
+
+    return () => {
+      if (opsTitleSaveTimerRef.current) window.clearTimeout(opsTitleSaveTimerRef.current)
+      opsTitleSaveTimerRef.current = null
+    }
+  }, [opsTitleDraft, selectedShot?.id, selectedShot?.title, onUpdateShotTitle])
+
+  useEffect(() => {
+    if (!selectedShot?.id) return
+    if (opsNoteDraft === (selectedShot.script_excerpt ?? '')) return
+
+    if (opsNoteSaveTimerRef.current) window.clearTimeout(opsNoteSaveTimerRef.current)
+    opsNoteSaveTimerRef.current = window.setTimeout(() => {
+      void onUpdateShotScriptExcerpt(selectedShot.id, opsNoteDraft)
+      opsNoteSaveTimerRef.current = null
+    }, 500)
+
+    return () => {
+      if (opsNoteSaveTimerRef.current) window.clearTimeout(opsNoteSaveTimerRef.current)
+      opsNoteSaveTimerRef.current = null
+    }
+  }, [opsNoteDraft, selectedShot?.id, selectedShot?.script_excerpt, onUpdateShotScriptExcerpt])
+
+  const flushOpsTitle = async () => {
+    if (!selectedShot?.id) return
+    if (opsTitleSaveTimerRef.current) window.clearTimeout(opsTitleSaveTimerRef.current)
+    opsTitleSaveTimerRef.current = null
+    if (opsTitleDraft === (selectedShot.title ?? '')) return
+    await onUpdateShotTitle(selectedShot.id, opsTitleDraft)
+  }
+
+  const flushOpsNote = async () => {
+    if (!selectedShot?.id) return
+    if (opsNoteSaveTimerRef.current) window.clearTimeout(opsNoteSaveTimerRef.current)
+    opsNoteSaveTimerRef.current = null
+    if (opsNoteDraft === (selectedShot.script_excerpt ?? '')) return
+    await onUpdateShotScriptExcerpt(selectedShot.id, opsNoteDraft)
+  }
 
   const sceneIds = useMemo(() => Array.from(new Set(sceneLinks.map((x) => x.scene_id).filter(Boolean))), [sceneLinks])
   const characterIds = useMemo(() => Array.from(new Set(shotCharacterLinks.map((x) => x.character_id).filter(Boolean))), [shotCharacterLinks])
@@ -2259,6 +2373,79 @@ function Inspector(props: {
           activeKey={inspectorTabKey}
           onChange={setInspectorTabKey}
           items={[
+            {
+              key: 'ops',
+              label: '分镜操作',
+              children: (
+                <div>
+                  <div className="cs-group">
+                    <div className="cs-group-title">
+                      <EditOutlined /> 基本
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <div className="text-gray-500 text-xs mb-1">分镜标题</div>
+                        <Input
+                          value={opsTitleDraft}
+                          placeholder="分镜标题…"
+                          onChange={(e) => setOpsTitleDraft(e.target.value)}
+                          onBlur={() => {
+                            void flushOpsTitle()
+                          }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-sm font-medium">隐藏此分镜</div>
+                          <div className="text-xs text-gray-500">隐藏后将不参与预览整章与导出</div>
+                        </div>
+                        <Switch checked={hideShot} onChange={setHideShot} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="cs-group">
+                    <div className="cs-group-title">
+                      <FileTextOutlined /> 分镜内容
+                    </div>
+                    <TextArea
+                      rows={3}
+                      value={opsNoteDraft}
+                      placeholder="备注…"
+                      onChange={(e) => setOpsNoteDraft(e.target.value)}
+                      onBlur={() => {
+                        void flushOpsNote()
+                      }}
+                    />
+                  </div>
+
+                  <div className="cs-group">
+                    <div className="cs-group-title">
+                      <AppstoreOutlined /> 操作
+                    </div>
+                    <Space wrap>
+                      <Button
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => {
+                          if (!selectedShot?.id) return
+                          Modal.confirm({
+                            title: '删除分镜？',
+                            content: '此操作不可撤销。',
+                            okText: '删除',
+                            okButtonProps: { danger: true },
+                            cancelText: '取消',
+                            onOk: () => onDeleteShotOps(selectedShot.id),
+                          })
+                        }}
+                      >
+                        删除
+                      </Button>
+                    </Space>
+                  </div>
+                </div>
+              ),
+            },
             {
               key: 'camera',
               label: '镜头语言',
@@ -2825,56 +3012,6 @@ function Inspector(props: {
                         { key: 'v3', label: 'v3' },
                       ]}
                     />
-                  </div>
-                </div>
-              ),
-            },
-            {
-              key: 'ops',
-              label: '分镜操作',
-              children: (
-                <div>
-                  <div className="cs-group">
-                    <div className="cs-group-title">
-                      <EditOutlined /> 基本
-                    </div>
-                    <div className="space-y-3">
-                      <div>
-                        <div className="text-gray-500 text-xs mb-1">分镜标题</div>
-                        <Input placeholder="分镜标题…" defaultValue={selectedShot?.title} />
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="text-sm font-medium">隐藏此分镜</div>
-                          <div className="text-xs text-gray-500">隐藏后将不参与预览整章与导出</div>
-                        </div>
-                        <Switch checked={hideShot} onChange={setHideShot} />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="cs-group">
-                    <div className="cs-group-title">
-                      <FileTextOutlined /> 备注
-                    </div>
-                    <TextArea rows={3} placeholder="备注…" />
-                  </div>
-
-                  <div className="cs-group">
-                    <div className="cs-group-title">
-                      <AppstoreOutlined /> 操作
-                    </div>
-                    <Space wrap>
-                      <Button danger icon={<DeleteOutlined />} onClick={() => message.info('删除（Mock）')}>
-                        删除
-                      </Button>
-                      <Button icon={<LinkOutlined />} onClick={() => message.success('已复制（Mock）')}>
-                        复制
-                      </Button>
-                      <Button icon={<VideoCameraAddOutlined />} onClick={() => message.success('已插入（Mock）')}>
-                        插入新分镜
-                      </Button>
-                    </Space>
                   </div>
                 </div>
               ),

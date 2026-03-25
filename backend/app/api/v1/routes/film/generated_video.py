@@ -12,11 +12,18 @@ from app.core import storage
 from app.core.db import async_session_maker
 from app.core.task_manager import DeliveryMode, SqlAlchemyTaskStore, TaskManager
 from app.core.task_manager.types import TaskStatus
-from app.core.tasks import ProviderConfig, VideoGenerationInput, VideoGenerationTask
+from app.core.tasks import (
+    ProviderConfig,
+    VideoGenerationInput,
+    VideoGenerationResult,
+    VideoGenerationTask,
+)
 from app.dependencies import get_db
 from app.models.llm import Model, ModelCategoryKey, ModelSettings, Provider
+from app.models.task_links import GenerationTaskLink
 from app.models.studio import FileItem, Shot, ShotDetail, ShotFrameImage, ShotFrameType
 from app.schemas.common import ApiResponse, success_response
+from app.utils.files import create_file_from_url_or_b64
 
 from .common import TaskCreated, _CreateOnlyTask, bind_task
 from .video_request import VideoGenerationTaskRequest
@@ -73,6 +80,55 @@ async def _load_provider_config_by_model(db: AsyncSession, model: Model) -> Prov
         )
     base_url = (provider.base_url or "").strip() or None
     return ProviderConfig(provider=provider_key, api_key=api_key, base_url=base_url)  # type: ignore[arg-type]
+
+
+async def _persist_generated_video_to_shot(
+    session: AsyncSession,
+    *,
+    task_id: str,
+    shot_id: str,
+    result: VideoGenerationResult,
+    provider: str,
+    api_key: str,
+) -> FileItem:
+    """将供应商返回的视频下载后写入对象存储，创建 FileItem，并回填 GenerationTaskLink 与 Shot。"""
+
+    url = (result.url or "").strip()
+    if not url:
+        raise RuntimeError("Video generation result has no download url")
+
+    url_headers: dict[str, str] | None = None
+    if provider == "openai":
+        url_headers = {"Authorization": f"Bearer {api_key}"}
+
+    file_obj = await create_file_from_url_or_b64(
+        session,
+        url=url,
+        name=f"shot-{shot_id}-video",
+        prefix=f"generated-videos/shots/{shot_id}",
+        url_request_headers=url_headers,
+        httpx_timeout=600.0,
+    )
+
+    link_stmt = (
+        select(GenerationTaskLink)
+        .where(
+            GenerationTaskLink.task_id == task_id,
+            GenerationTaskLink.resource_type == "task_link",
+            GenerationTaskLink.relation_type == "video",
+            GenerationTaskLink.relation_entity_id == shot_id,
+        )
+        .limit(1)
+    )
+    link_row = (await session.execute(link_stmt)).scalars().first()
+    if link_row is not None:
+        link_row.file_id = file_obj.id
+
+    shot = await session.get(Shot, shot_id)
+    if shot is not None:
+        shot.generated_video_file_id = file_obj.id
+
+    return file_obj
 
 
 @router.post(
@@ -211,6 +267,7 @@ async def create_video_generation_task(
         raise HTTPException(status_code=400, detail="prompt is required when reference_mode=text_only")
 
     run_args: dict = {
+        "shot_id": body.shot_id,
         "provider": provider_cfg.provider,
         "api_key": provider_cfg.api_key,
         "base_url": provider_cfg.base_url,
@@ -273,7 +330,22 @@ async def create_video_generation_task(
                     msg = detailed_error or "Video generation task returned no result"
                     raise RuntimeError(msg)
 
-                await store2.set_result(task_id, result.model_dump())
+                shot_id_run = str(args.get("shot_id") or "")
+                if not shot_id_run:
+                    raise RuntimeError("run_args missing shot_id for video persistence")
+
+                file_obj = await _persist_generated_video_to_shot(
+                    session,
+                    task_id=task_id,
+                    shot_id=shot_id_run,
+                    result=result,
+                    provider=provider,
+                    api_key=api_key,
+                )
+
+                result_payload = result.model_dump()
+                result_payload["file_id"] = file_obj.id
+                await store2.set_result(task_id, result_payload)
                 await store2.set_progress(task_id, 100)
                 await store2.set_status(task_id, TaskStatus.succeeded)
                 await session.commit()
