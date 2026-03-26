@@ -2,8 +2,6 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { ApiResponse_FilmEntityExtractionResult_ } from '../models/ApiResponse_FilmEntityExtractionResult_';
-import type { ApiResponse_FilmShotlistResult_ } from '../models/ApiResponse_FilmShotlistResult_';
 import type { ApiResponse_GenerationTaskLinkRead_ } from '../models/ApiResponse_GenerationTaskLinkRead_';
 import type { ApiResponse_NoneType_ } from '../models/ApiResponse_NoneType_';
 import type { ApiResponse_PaginatedData_GenerationTaskLinkRead__ } from '../models/ApiResponse_PaginatedData_GenerationTaskLinkRead__';
@@ -11,102 +9,16 @@ import type { ApiResponse_TaskCreated_ } from '../models/ApiResponse_TaskCreated
 import type { ApiResponse_TaskLinkAdoptRead_ } from '../models/ApiResponse_TaskLinkAdoptRead_';
 import type { ApiResponse_TaskResultRead_ } from '../models/ApiResponse_TaskResultRead_';
 import type { ApiResponse_TaskStatusRead_ } from '../models/ApiResponse_TaskStatusRead_';
-import type { EntityExtractRequest } from '../models/EntityExtractRequest';
-import type { EntityExtractTaskRequest } from '../models/EntityExtractTaskRequest';
 import type { GenerationTaskLinkCreate } from '../models/GenerationTaskLinkCreate';
 import type { GenerationTaskLinkUpdate } from '../models/GenerationTaskLinkUpdate';
 import type { ImageGenerationTaskRequest } from '../models/ImageGenerationTaskRequest';
 import type { ShotFramePromptRequest } from '../models/ShotFramePromptRequest';
-import type { ShotlistExtractRequest } from '../models/ShotlistExtractRequest';
-import type { ShotlistExtractTaskRequest } from '../models/ShotlistExtractTaskRequest';
 import type { TaskLinkAdoptRequest } from '../models/TaskLinkAdoptRequest';
 import type { VideoGenerationTaskRequest } from '../models/VideoGenerationTaskRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class FilmService {
-    /**
-     * 关键信息抽取
-     * 从小说文本中抽取人物、地点、道具，忠实原文、可追溯证据。
-     * @returns ApiResponse_FilmEntityExtractionResult_ Successful Response
-     * @throws ApiError
-     */
-    public static extractEntitiesApiV1FilmExtractEntitiesPost({
-        requestBody,
-    }: {
-        requestBody: EntityExtractRequest,
-    }): CancelablePromise<ApiResponse_FilmEntityExtractionResult_> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/film/extract/entities',
-            body: requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: `Validation Error`,
-            },
-        });
-    }
-    /**
-     * 分镜抽取
-     * 将小说片段转为可拍镜头表（景别/机位/运镜/转场/VFX）。
-     * @returns ApiResponse_FilmShotlistResult_ Successful Response
-     * @throws ApiError
-     */
-    public static extractShotlistApiV1FilmExtractShotlistPost({
-        requestBody,
-    }: {
-        requestBody: ShotlistExtractRequest,
-    }): CancelablePromise<ApiResponse_FilmShotlistResult_> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/film/extract/shotlist',
-            body: requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: `Validation Error`,
-            },
-        });
-    }
-    /**
-     * 关键信息抽取（任务版）
-     * @returns ApiResponse_TaskCreated_ Successful Response
-     * @throws ApiError
-     */
-    public static createEntityExtractTaskApiV1FilmTasksEntitiesPost({
-        requestBody,
-    }: {
-        requestBody: EntityExtractTaskRequest,
-    }): CancelablePromise<ApiResponse_TaskCreated_> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/film/tasks/entities',
-            body: requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: `Validation Error`,
-            },
-        });
-    }
-    /**
-     * 分镜抽取（任务版）
-     * @returns ApiResponse_TaskCreated_ Successful Response
-     * @throws ApiError
-     */
-    public static createShotlistTaskApiV1FilmTasksShotlistPost({
-        requestBody,
-    }: {
-        requestBody: ShotlistExtractTaskRequest,
-    }): CancelablePromise<ApiResponse_TaskCreated_> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/film/tasks/shotlist',
-            body: requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: `Validation Error`,
-            },
-        });
-    }
     /**
      * 视频生成（任务版）
      * 创建视频生成任务并后台执行，结果通过 /tasks/{task_id}/result 获取。

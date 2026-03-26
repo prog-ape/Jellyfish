@@ -22,5 +22,13 @@ export type StudioImageTaskRequest = {
      * 图片模型 ID，如 ActorImage.id / SceneImage.id / PropImage.id 等；必须与路径主体 ID 匹配
      */
     image_id?: (number | null);
+    /**
+     * 提示词（由前端传入）。创建任务接口必填；render-prompt 接口可不传
+     */
+    prompt?: (string | null);
+    /**
+     * 参考图 file_id 列表（可多张，顺序有效）。创建任务接口会基于 file_id 从数据中解析为参考图
+     */
+    images?: Array<string>;
 };
 

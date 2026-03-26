@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ApiResponse_RenderedPromptResponse_ } from '../models/ApiResponse_RenderedPromptResponse_';
 import type { ApiResponse_TaskCreated_ } from '../models/ApiResponse_TaskCreated_';
 import type { ShotFrameImageTaskRequest } from '../models/ShotFrameImageTaskRequest';
 import type { StudioImageTaskRequest } from '../models/StudioImageTaskRequest';
@@ -25,6 +26,31 @@ export class StudioImageTasksService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/v1/studio/image-tasks/actors/{actor_id}/image-tasks',
+            path: {
+                'actor_id': actorId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * 演员图片提示词渲染
+     * @returns ApiResponse_RenderedPromptResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static renderActorImagePromptApiV1StudioImageTasksActorsActorIdRenderPromptPost({
+        actorId,
+        requestBody,
+    }: {
+        actorId: string,
+        requestBody: StudioImageTaskRequest,
+    }): CancelablePromise<ApiResponse_RenderedPromptResponse_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/studio/image-tasks/actors/{actor_id}/render-prompt',
             path: {
                 'actor_id': actorId,
             },
@@ -69,6 +95,34 @@ export class StudioImageTasksService {
         });
     }
     /**
+     * 道具/场景/服装图片提示词渲染
+     * @returns ApiResponse_RenderedPromptResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static renderAssetImagePromptApiV1StudioImageTasksAssetsAssetTypeAssetIdRenderPromptPost({
+        assetType,
+        assetId,
+        requestBody,
+    }: {
+        assetType: string,
+        assetId: string,
+        requestBody: StudioImageTaskRequest,
+    }): CancelablePromise<ApiResponse_RenderedPromptResponse_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/studio/image-tasks/assets/{asset_type}/{asset_id}/render-prompt',
+            path: {
+                'asset_type': assetType,
+                'asset_id': assetId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
      * 角色图片生成（任务版）
      * 为角色创建图片生成任务（对应 CharacterImage 业务）。
      *
@@ -98,6 +152,31 @@ export class StudioImageTasksService {
         });
     }
     /**
+     * 角色图片提示词渲染
+     * @returns ApiResponse_RenderedPromptResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static renderCharacterImagePromptApiV1StudioImageTasksCharactersCharacterIdRenderPromptPost({
+        characterId,
+        requestBody,
+    }: {
+        characterId: string,
+        requestBody: StudioImageTaskRequest,
+    }): CancelablePromise<ApiResponse_RenderedPromptResponse_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/studio/image-tasks/characters/{character_id}/render-prompt',
+            path: {
+                'character_id': characterId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
      * 镜头分镜帧图片生成（任务版）
      * 为镜头分镜帧图片生成任务（基于 `shot_id + frame_type` 自动定位数据）。
      * @returns ApiResponse_TaskCreated_ Successful Response
@@ -113,6 +192,31 @@ export class StudioImageTasksService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/v1/studio/image-tasks/shot/{shot_id}/frame-image-tasks',
+            path: {
+                'shot_id': shotId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * 镜头分镜帧提示词渲染
+     * @returns ApiResponse_RenderedPromptResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static renderShotFramePromptApiV1StudioImageTasksShotShotIdFrameRenderPromptPost({
+        shotId,
+        requestBody,
+    }: {
+        shotId: string,
+        requestBody: ShotFrameImageTaskRequest,
+    }): CancelablePromise<ApiResponse_RenderedPromptResponse_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/studio/image-tasks/shot/{shot_id}/frame-render-prompt',
             path: {
                 'shot_id': shotId,
             },

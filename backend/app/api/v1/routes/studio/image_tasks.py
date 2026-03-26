@@ -6,12 +6,16 @@ from __future__ import annotations
 将任务与上层业务实体（演员形象/道具/场景/服装/角色/镜头分镜帧）建立关联。
 """
 
+import base64
+import mimetypes
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import storage
 from app.core.db import async_session_maker
 from app.core.task_manager import DeliveryMode, SqlAlchemyTaskStore, TaskManager
 from app.core.task_manager.types import TaskStatus
@@ -26,6 +30,7 @@ from app.models.studio import (
     CharacterImage,
     Costume,
     CostumeImage,
+    FileItem,
     PromptCategory,
     Prop,
     PropImage,
@@ -76,6 +81,14 @@ class StudioImageTaskRequest(BaseModel):
         None,
         description="图片模型 ID，如 ActorImage.id / SceneImage.id / PropImage.id 等；必须与路径主体 ID 匹配",
     )
+    prompt: str | None = Field(
+        None,
+        description="提示词（由前端传入）。创建任务接口必填；render-prompt 接口可不传",
+    )
+    images: list[str] = Field(
+        default_factory=list,
+        description="参考图 file_id 列表（可多张，顺序有效）。创建任务接口会基于 file_id 从数据中解析为参考图",
+    )
 
 
 class ShotFrameImageTaskRequest(BaseModel):
@@ -89,10 +102,246 @@ class ShotFrameImageTaskRequest(BaseModel):
         description="可选模型 ID（models.id）；不传则使用 ModelSettings.default_image_model_id；Provider 由模型关联反查",
     )
     frame_type: ShotFrameType = Field(..., description="first | last | key")
+    prompt: str | None = Field(
+        None,
+        description="提示词（由前端传入）。创建任务接口必填；frame-render-prompt 接口可不传",
+    )
+    images: list[str] = Field(
+        default_factory=list,
+        description="参考图 file_id 列表（可多张，顺序有效）。创建任务接口会基于 file_id 从数据中解析为参考图",
+    )
 
 
 class RenderedPromptResponse(BaseModel):
     prompt: str = Field(..., description="渲染后的提示词（已套用模板与变量替换）")
+    images: list[str] = Field(
+        default_factory=list,
+        description="参考图 file_id 列表（自动选择；顺序有效）",
+    )
+
+
+async def _resolve_reference_image_refs_by_file_ids(
+    db: AsyncSession,
+    *,
+    file_ids: list[str],
+) -> list[dict[str, str]]:
+    """将 file_id 列表解析为图片参考（data url）。顺序与入参一致。"""
+    out: list[dict[str, str]] = []
+    for fid in file_ids or []:
+        file_id = (fid or "").strip()
+        if not file_id:
+            continue
+        file_obj = await db.get(FileItem, file_id)
+        if file_obj is None or not file_obj.storage_key:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"FileItem not found or storage_key empty for file_id={file_id}",
+            )
+        try:
+            content = await storage.download_file(key=file_obj.storage_key)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to download file for file_id={file_id}: {exc}",
+            ) from exc
+        if not content:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Empty file content for file_id={file_id}",
+            )
+
+        content_type: str | None = None
+        try:
+            info = await storage.get_file_info(key=file_obj.storage_key)
+            content_type = (info.content_type or "").strip().lower() or None
+        except Exception:  # noqa: BLE001
+            content_type = None
+        if not content_type:
+            guessed_type, _ = mimetypes.guess_type(file_obj.storage_key)
+            content_type = (guessed_type or "").strip().lower() or None
+        if not content_type or not content_type.startswith("image/"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File is not an image for file_id={file_id}",
+            )
+
+        image_format = content_type.split("/", 1)[1].split(";", 1)[0].strip().lower() or "png"
+        encoded = base64.b64encode(content).decode("ascii")
+        data_url = f"data:image/{image_format};base64,{encoded}"
+        out.append({"image_url": data_url})
+    return out
+
+
+async def _validate_actor_image(
+    db: AsyncSession,
+    *,
+    actor_id: str,
+    image_id: int | None,
+) -> ActorImage:
+    actor = await db.get(Actor, actor_id)
+    if actor is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Actor not found")
+    if image_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="image_id is required for actor generation",
+        )
+    image_row = await db.get(ActorImage, image_id)
+    if image_row is None or image_row.actor_id != actor_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="image_id does not belong to given actor_id",
+        )
+    return image_row
+
+
+async def _validate_asset_image_and_relation_type(
+    db: AsyncSession,
+    *,
+    asset_type: str,
+    asset_id: str,
+    image_id: int | None,
+) -> tuple[int, str]:
+    if image_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="image_id is required for asset image generation",
+        )
+    asset_type_norm = asset_type.strip().lower()
+    if asset_type_norm == "prop":
+        asset = await db.get(Prop, asset_id)
+        if asset is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Prop not found")
+        image_row = await db.get(PropImage, image_id)
+        if image_row is None or image_row.prop_id != asset_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="image_id does not belong to given prop_id",
+            )
+        return image_id, "prop_image"
+    if asset_type_norm == "scene":
+        asset = await db.get(Scene, asset_id)
+        if asset is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scene not found")
+        image_row = await db.get(SceneImage, image_id)
+        if image_row is None or image_row.scene_id != asset_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="image_id does not belong to given scene_id",
+            )
+        return image_id, "scene_image"
+    if asset_type_norm == "costume":
+        asset = await db.get(Costume, asset_id)
+        if asset is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Costume not found")
+        image_row = await db.get(CostumeImage, image_id)
+        if image_row is None or image_row.costume_id != asset_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="image_id does not belong to given costume_id",
+            )
+        return image_id, "costume_image"
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="asset_type must be one of: prop/scene/costume",
+    )
+
+
+async def _validate_character_image(
+    db: AsyncSession,
+    *,
+    character_id: str,
+    image_id: int | None,
+) -> CharacterImage:
+    character = await db.get(Character, character_id)
+    if character is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Character not found")
+    if image_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="image_id is required for character image generation",
+        )
+    image_row = await db.get(CharacterImage, image_id)
+    if image_row is None or image_row.character_id != character_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="image_id does not belong to given character_id",
+        )
+    return image_row
+
+
+async def _pick_front_ref_file_id(
+    db: AsyncSession,
+    *,
+    image_model: type,
+    parent_field_name: str,
+    parent_id: str,
+    preferred_quality_level: object | None,
+) -> str | None:
+    """按旧语义挑选 front 参考图的 file_id（不下载文件）。"""
+    parent_field = getattr(image_model, parent_field_name)
+    stmt = (
+        select(image_model)
+        .where(
+            parent_field == parent_id,
+            image_model.view_angle == AssetViewAngle.front,
+            image_model.file_id.is_not(None),
+        )
+        .order_by(image_model.created_at.desc(), image_model.id.desc())
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    if not rows:
+        return None
+
+    target = rows[0]
+    if preferred_quality_level is not None:
+        for row in rows:
+            if getattr(row, "quality_level", None) == preferred_quality_level:
+                target = row
+                break
+
+    fid = getattr(target, "file_id", None)
+    return str(fid) if fid else None
+
+
+async def _pick_ordered_ref_file_ids(
+    db: AsyncSession,
+    *,
+    image_model: type,
+    parent_field_name: str,
+    parent_id: str,
+    view_angles: tuple[AssetViewAngle, ...],
+) -> list[str]:
+    """按旧语义按角度顺序挑选参考图 file_id（不下载文件）。"""
+    parent_field = getattr(image_model, parent_field_name)
+    stmt = (
+        select(image_model)
+        .where(
+            parent_field == parent_id,
+            image_model.file_id.is_not(None),
+        )
+        .order_by(image_model.created_at.desc(), image_model.id.desc())
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    if not rows:
+        return []
+
+    best_by_angle: dict[str, object] = {}
+    for row in rows:
+        angle = getattr(row, "view_angle", None)
+        key = angle.value if isinstance(angle, AssetViewAngle) else str(angle)
+        if key and key not in best_by_angle:
+            best_by_angle[key] = row
+
+    out: list[str] = []
+    for angle in view_angles:
+        row = best_by_angle.get(angle.value)
+        if row is None:
+            continue
+        fid = getattr(row, "file_id", None)
+        if fid:
+            out.append(str(fid))
+    return out
 
 
 async def _build_actor_prompt_and_refs(
@@ -100,7 +349,7 @@ async def _build_actor_prompt_and_refs(
     *,
     actor_id: str,
     image_id: int | None,
-) -> tuple[str, list[dict[str, str]] | None, ActorImage]:
+) -> tuple[str, list[str], ActorImage]:
     actor = await db.get(Actor, actor_id)
     if actor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Actor not found")
@@ -134,20 +383,16 @@ async def _build_actor_prompt_and_refs(
         fallback_prompt=actor.description,
         not_found_msg="Actor.description is empty",
     )
-    images = (
-        []
-        if is_front_view
-        else [ref]
-        if (ref := await _resolve_front_image_ref(
-            db,
-            image_model=ActorImage,
-            parent_field_name="actor_id",
-            parent_id=actor_id,
-            preferred_quality_level=image_row.quality_level,
-        ))
-        else []
+    if is_front_view:
+        return prompt, [], image_row
+    fid = await _pick_front_ref_file_id(
+        db,
+        image_model=ActorImage,
+        parent_field_name="actor_id",
+        parent_id=actor_id,
+        preferred_quality_level=image_row.quality_level,
     )
-    return prompt, (images if images else None), image_row
+    return prompt, ([fid] if fid else []), image_row
 
 
 async def _build_asset_prompt_and_refs(
@@ -156,7 +401,7 @@ async def _build_asset_prompt_and_refs(
     asset_type: str,
     asset_id: str,
     image_id: int | None,
-) -> tuple[str, list[dict[str, str]] | None, str]:
+) -> tuple[str, list[str], str]:
     if image_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -194,20 +439,16 @@ async def _build_asset_prompt_and_refs(
             fallback_prompt=asset.description,
             not_found_msg="Prop.description is empty",
         )
-        images = (
-            []
-            if is_front_view
-            else [ref]
-            if (ref := await _resolve_front_image_ref(
-                db,
-                image_model=PropImage,
-                parent_field_name="prop_id",
-                parent_id=asset_id,
-                preferred_quality_level=image_row.quality_level,
-            ))
-            else []
+        if is_front_view:
+            return prompt, [], relation_type
+        fid = await _pick_front_ref_file_id(
+            db,
+            image_model=PropImage,
+            parent_field_name="prop_id",
+            parent_id=asset_id,
+            preferred_quality_level=image_row.quality_level,
         )
-        return prompt, (images if images else None), relation_type
+        return prompt, ([fid] if fid else []), relation_type
     if asset_type_norm == "scene":
         asset = await db.get(Scene, asset_id)
         if asset is None:
@@ -238,20 +479,16 @@ async def _build_asset_prompt_and_refs(
             fallback_prompt=asset.description,
             not_found_msg="Scene.description is empty",
         )
-        images = (
-            []
-            if is_front_view
-            else [ref]
-            if (ref := await _resolve_front_image_ref(
-                db,
-                image_model=SceneImage,
-                parent_field_name="scene_id",
-                parent_id=asset_id,
-                preferred_quality_level=image_row.quality_level,
-            ))
-            else []
+        if is_front_view:
+            return prompt, [], relation_type
+        fid = await _pick_front_ref_file_id(
+            db,
+            image_model=SceneImage,
+            parent_field_name="scene_id",
+            parent_id=asset_id,
+            preferred_quality_level=image_row.quality_level,
         )
-        return prompt, (images if images else None), relation_type
+        return prompt, ([fid] if fid else []), relation_type
     if asset_type_norm == "costume":
         asset = await db.get(Costume, asset_id)
         if asset is None:
@@ -282,20 +519,16 @@ async def _build_asset_prompt_and_refs(
             fallback_prompt=asset.description,
             not_found_msg="Costume.description is empty",
         )
-        images = (
-            []
-            if is_front_view
-            else [ref]
-            if (ref := await _resolve_front_image_ref(
-                db,
-                image_model=CostumeImage,
-                parent_field_name="costume_id",
-                parent_id=asset_id,
-                preferred_quality_level=image_row.quality_level,
-            ))
-            else []
+        if is_front_view:
+            return prompt, [], relation_type
+        fid = await _pick_front_ref_file_id(
+            db,
+            image_model=CostumeImage,
+            parent_field_name="costume_id",
+            parent_id=asset_id,
+            preferred_quality_level=image_row.quality_level,
         )
-        return prompt, (images if images else None), relation_type
+        return prompt, ([fid] if fid else []), relation_type
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="asset_type must be one of: prop/scene/costume",
@@ -307,7 +540,7 @@ async def _build_character_prompt_and_refs(
     *,
     character_id: str,
     image_id: int | None,
-) -> tuple[str, list[dict[str, str]] | None, CharacterImage]:
+) -> tuple[str, list[str], CharacterImage]:
     character = await db.get(Character, character_id)
     if character is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Character not found")
@@ -344,18 +577,18 @@ async def _build_character_prompt_and_refs(
         AssetViewAngle.right,
         AssetViewAngle.back,
     )
-    actor_refs: list[dict[str, str]] = []
+    actor_refs: list[str] = []
     if actor is not None:
-        actor_refs = await _resolve_ordered_image_refs(
+        actor_refs = await _pick_ordered_ref_file_ids(
             db,
             image_model=ActorImage,
             parent_field_name="actor_id",
             parent_id=actor.id,
             view_angles=DEFAULT_VIEW_ANGLES,
         )
-    costume_refs: list[dict[str, str]] = []
+    costume_refs: list[str] = []
     if costume is not None:
-        costume_refs = await _resolve_ordered_image_refs(
+        costume_refs = await _pick_ordered_ref_file_ids(
             db,
             image_model=CostumeImage,
             parent_field_name="costume_id",
@@ -363,7 +596,7 @@ async def _build_character_prompt_and_refs(
             view_angles=DEFAULT_VIEW_ANGLES,
         )
     ref_images = [*actor_refs, *costume_refs]
-    return prompt, (ref_images if ref_images else None), image_row
+    return prompt, ref_images, image_row
 
 
 def _cn_num(n: int) -> str:
@@ -386,7 +619,7 @@ async def _build_shot_frame_prompt_and_refs(
     *,
     shot_id: str,
     frame_type: ShotFrameType,
-) -> tuple[str, list[dict[str, str]] | None, ShotDetail]:
+) -> tuple[str, list[str], ShotDetail]:
     shot_detail = await db.get(ShotDetail, shot_id)
     if shot_detail is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ShotDetail not found")
@@ -413,28 +646,28 @@ async def _build_shot_frame_prompt_and_refs(
     role_links = (await db.execute(role_links_stmt)).scalars().all()
 
     role_names: list[str] = []
-    role_image_refs: list[dict[str, str]] = []
+    role_image_ids: list[str] = []
 
     for link in role_links:
         character = link.character
         if character is None:
             continue
 
-        ref = await _resolve_front_image_ref(
+        fid = await _pick_front_ref_file_id(
             db,
             image_model=CharacterImage,
             parent_field_name="character_id",
             parent_id=character.id,
             preferred_quality_level=None,
         )
-        if ref is None:
+        if fid is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"CharacterImage front ref not found for character_id={character.id}, name={character.name}",
             )
 
         role_names.append(character.name)
-        role_image_refs.append(ref)
+        role_image_ids.append(fid)
 
     if role_links and not role_names:
         raise HTTPException(
@@ -481,7 +714,7 @@ async def _build_shot_frame_prompt_and_refs(
         fallback_prompt=base_prompt,
         not_found_msg=f"ShotDetail has no prompt for frame_type={frame_type}",
     )
-    return prompt, (role_image_refs if role_image_refs else None), shot_detail
+    return prompt, role_image_ids, shot_detail
 
 
 
@@ -720,18 +953,21 @@ async def create_actor_image_generation_task(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[TaskCreated]:
     """为指定演员创建图片生成任务，并通过 `GenerationTaskLink` 关联。"""
-    prompt, images, image_row = await _build_actor_prompt_and_refs(
-        db,
-        actor_id=actor_id,
-        image_id=body.image_id,
-    )
+    prompt = (body.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="prompt is required for actor generation",
+        )
+    image_row = await _validate_actor_image(db, actor_id=actor_id, image_id=body.image_id)
+    ref_images = await _resolve_reference_image_refs_by_file_ids(db, file_ids=body.images)
     created = await _create_image_task_and_link(
         db=db,
         model_id=body.model_id,
         relation_type="actor_image",
         relation_entity_id=str(image_row.id),
         prompt=prompt,
-        images=images,
+        images=ref_images if ref_images else None,
     )
     return success_response(created, code=201)
 
@@ -747,12 +983,12 @@ async def render_actor_image_prompt(
     body: StudioImageTaskRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RenderedPromptResponse]:
-    prompt, _images, _image_row = await _build_actor_prompt_and_refs(
+    prompt, images, _image_row = await _build_actor_prompt_and_refs(
         db,
         actor_id=actor_id,
         image_id=body.image_id,
     )
-    return success_response(RenderedPromptResponse(prompt=prompt))
+    return success_response(RenderedPromptResponse(prompt=prompt, images=images))
 
 
 @router.post(
@@ -773,20 +1009,27 @@ async def create_asset_image_generation_task(
     - path 参数 asset_id 为对应资产 ID
     - body.image_id 必须为该资产下对应图片表记录的 ID（PropImage/SceneImage/CostumeImage）
     """
-    prompt, images, relation_type = await _build_asset_prompt_and_refs(
+    prompt = (body.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="prompt is required for asset image generation",
+        )
+    image_id, relation_type = await _validate_asset_image_and_relation_type(
         db,
         asset_type=asset_type,
         asset_id=asset_id,
         image_id=body.image_id,
     )
+    ref_images = await _resolve_reference_image_refs_by_file_ids(db, file_ids=body.images)
 
     created = await _create_image_task_and_link(
         db=db,
         model_id=body.model_id,
         relation_type=relation_type,
-        relation_entity_id=str(body.image_id),
+        relation_entity_id=str(image_id),
         prompt=prompt,
-        images=images,
+        images=ref_images if ref_images else None,
     )
     return success_response(created, code=201)
 
@@ -803,13 +1046,13 @@ async def render_asset_image_prompt(
     body: StudioImageTaskRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RenderedPromptResponse]:
-    prompt, _images, _relation_type = await _build_asset_prompt_and_refs(
+    prompt, images, _relation_type = await _build_asset_prompt_and_refs(
         db,
         asset_type=asset_type,
         asset_id=asset_id,
         image_id=body.image_id,
     )
-    return success_response(RenderedPromptResponse(prompt=prompt))
+    return success_response(RenderedPromptResponse(prompt=prompt, images=images))
 
 
 @router.post(
@@ -828,18 +1071,21 @@ async def create_character_image_generation_task(
     - path 参数 character_id 为 Character.id
     - body.image_id 必须为该角色下的 CharacterImage.id
     """
-    prompt, ref_images, image_row = await _build_character_prompt_and_refs(
-        db,
-        character_id=character_id,
-        image_id=body.image_id,
-    )
+    prompt = (body.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="prompt is required for character image generation",
+        )
+    image_row = await _validate_character_image(db, character_id=character_id, image_id=body.image_id)
+    ref_images = await _resolve_reference_image_refs_by_file_ids(db, file_ids=body.images)
     created = await _create_image_task_and_link(
         db=db,
         model_id=body.model_id,
         relation_type="character_image",
         relation_entity_id=str(image_row.id),
         prompt=prompt,
-        images=ref_images,
+        images=ref_images if ref_images else None,
     )
     return success_response(created, code=201)
 
@@ -855,12 +1101,12 @@ async def render_character_image_prompt(
     body: StudioImageTaskRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RenderedPromptResponse]:
-    prompt, _ref_images, _image_row = await _build_character_prompt_and_refs(
+    prompt, images, _image_row = await _build_character_prompt_and_refs(
         db,
         character_id=character_id,
         image_id=body.image_id,
     )
-    return success_response(RenderedPromptResponse(prompt=prompt))
+    return success_response(RenderedPromptResponse(prompt=prompt, images=images))
 
 
 @router.post(
@@ -875,11 +1121,16 @@ async def create_shot_frame_image_generation_task(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[TaskCreated]:
     """为镜头分镜帧图片生成任务（基于 `shot_id + frame_type` 自动定位数据）。"""
-    prompt, role_image_refs, _shot_detail = await _build_shot_frame_prompt_and_refs(
-        db,
-        shot_id=shot_id,
-        frame_type=body.frame_type,
-    )
+    prompt = (body.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="prompt is required for shot frame generation",
+        )
+    shot_detail = await db.get(ShotDetail, shot_id)
+    if shot_detail is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ShotDetail not found")
+    ref_images = await _resolve_reference_image_refs_by_file_ids(db, file_ids=body.images)
 
     # 通过 shot_id 与 frame_type 定位 ShotFrameImage，作为落库目标；若不存在则创建占位记录。
     shot_frame_image_stmt = (
@@ -913,7 +1164,7 @@ async def create_shot_frame_image_generation_task(
         relation_type="shot_frame_image",
         relation_entity_id=str(shot_frame_image.id),
         prompt=prompt,
-        images=role_image_refs,
+        images=ref_images if ref_images else None,
     )
     return success_response(created, code=201)
 
@@ -929,10 +1180,10 @@ async def render_shot_frame_prompt(
     body: ShotFrameImageTaskRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RenderedPromptResponse]:
-    prompt, _role_image_refs, _shot_detail = await _build_shot_frame_prompt_and_refs(
+    prompt, images, _shot_detail = await _build_shot_frame_prompt_and_refs(
         db,
         shot_id=shot_id,
         frame_type=body.frame_type,
     )
-    return success_response(RenderedPromptResponse(prompt=prompt))
+    return success_response(RenderedPromptResponse(prompt=prompt, images=images))
 

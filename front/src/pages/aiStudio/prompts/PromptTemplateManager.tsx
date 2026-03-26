@@ -6,46 +6,52 @@ import { StudioPromptsService } from '../../../services/generated'
 import type { PromptCategory, PromptTemplateRead } from '../../../services/generated'
 
 const fallbackCategoryLabels: Record<string, string> = {
-  frame_head: '首帧',
-  frame_tail: '尾帧',
-  frame_key: '关键帧',
-  video: '视频生成',
-  storyboard: '分镜',
+  frame_head_image: '首帧图片',
+  frame_tail_image: '尾帧图片',
+  frame_key_image: '关键帧图片',
+  frame_head_prompt: '首帧提示词',
+  frame_tail_prompt: '尾帧提示词',
+  frame_key_prompt: '关键帧提示词',
+  video_prompt: '视频提示词',
+  storyboard_prompt: '分镜',
   bgm: '配乐',
   sfx: '音效',
-  character_front: '角色正面',
-  character_other: '角色其他',
-  actor_image_front: '角色正面',
-  actor_image_other: '角色其他',
-  prop_front: '道具正面',
-  prop_other: '道具其他',
-  scene_front: '场景正面',
-  scene_other: '场景其他',
-  costume_front: '服装正面',
-  costume_other: '服装其他',
+  character_image_front: '角色正面',
+  character_image_other: '角色其他',
+  actor_image_front: '角色形象正面',
+  actor_image_other: '角色形象其他',
+  prop_image_front: '道具正面',
+  prop_image_other: '道具其他',
+  scene_image_front: '场景正面',
+  scene_image_other: '场景其他',
+  costume_image_front: '服装正面',
+  costume_image_other: '服装其他',
   combined: '综合提示词',
 }
 
 const PAGE_SIZE = 10
 
 const defaultPromptCategories: PromptCategory[] = [
-  'frame_head',
-  'frame_tail',
-  'frame_key',
-  'video',
-  'storyboard',
+  'frame_head_image',
+  'frame_tail_image',
+  'frame_key_image',
+  'frame_head_prompt',
+  'frame_tail_prompt',
+  'frame_key_prompt',
+  'video_prompt',
+  'storyboard_prompt',
   'bgm',
   'sfx',
-  'character_front',
-  'character_other',
+  'character_image_front',
+  'character_image_other',
   'actor_image_front',
   'actor_image_other',
-  'prop_front',
-  'prop_other',
-  'scene_front',
-  'scene_other',
-  'costume_front',
-  'costume_other',
+  'prop_image_front',
+  'prop_image_other',
+  'scene_image_front',
+  'scene_image_other',
+  'costume_image_front',
+  'costume_image_other',
   'combined',
 ]
 
@@ -87,14 +93,14 @@ const groupTitles: Record<(typeof groupOrder)[number], string> = {
 }
 
 function getGroupKey(category: string): (typeof groupOrder)[number] {
-  if (['frame_head', 'frame_tail', 'frame_key'].includes(category)) return 'frame'
-  if (['video', 'storyboard'].includes(category)) return 'video'
+  if (category.startsWith('frame_')) return 'frame'
+  if (category === 'video_prompt' || category === 'storyboard_prompt') return 'video'
   if (['bgm', 'sfx'].includes(category)) return 'audio'
-  if (category.startsWith('character_')) return 'chapter'
+  if (category.startsWith('character_image_')) return 'chapter'
   if (category.startsWith('actor_image')) return 'actor'
-  if (category.startsWith('scene_')) return 'scene'
-  if (category.startsWith('prop_')) return 'prop'
-  if (category.startsWith('costume_')) return 'costume'
+  if (category.startsWith('scene_image_')) return 'scene'
+  if (category.startsWith('prop_image_')) return 'prop'
+  if (category.startsWith('costume_image_')) return 'costume'
   if (category === 'combined') return 'combined'
   return 'other'
 }

@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { PromptCategory } from './PromptCategory';
 /**
- * 提示词类别选项（枚举值 + 中文标签）。
+ * 提示词类别选项（枚举值 + 中文标签 + 简介）。
  */
 export type PromptCategoryOptionRead = {
     /**
@@ -15,5 +15,9 @@ export type PromptCategoryOptionRead = {
      * 中文名称
      */
     label: string;
+    /**
+     * 类别简介
+     */
+    description?: string;
 };
 

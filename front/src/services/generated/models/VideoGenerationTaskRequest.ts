@@ -3,72 +3,24 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * 视频生成任务请求：可选绑定到 project/chapter/shot。
+ * 视频生成任务请求：基于 shot_id 自动组装参考帧与时长。
  */
 export type VideoGenerationTaskRequest = {
     /**
-     * 绑定项目 ID（可选）
+     * 镜头 ID
      */
-    project_id?: (string | null);
+    shot_id: string;
     /**
-     * 绑定章节 ID（可选）
+     * 参考模式：first | last | key | first_last | first_last_key | text_only
      */
-    chapter_id?: (string | null);
+    reference_mode: 'first' | 'last' | 'key' | 'first_last' | 'first_last_key' | 'text_only';
     /**
-     * 绑定镜头 ID（可选）
-     */
-    shot_id?: (string | null);
-    /**
-     * 供应商：openai | volcengine
-     */
-    provider: string;
-    /**
-     * 供应商 API Key（Bearer）
-     */
-    api_key: string;
-    /**
-     * 供应商 base_url（可选）
-     */
-    base_url?: (string | null);
-    /**
-     * 文本提示词（可选）
+     * 视频提示词（text_only 必填）
      */
     prompt?: (string | null);
-    /**
-     * 首帧图片 file_id（可选）
-     */
-    first_frame_file_id?: (string | null);
-    /**
-     * 首帧图片 URL（可选）
-     */
-    first_frame_url?: (string | null);
-    /**
-     * 尾帧图片 file_id（可选）
-     */
-    last_frame_file_id?: (string | null);
-    /**
-     * 尾帧图片 URL（可选）
-     */
-    last_frame_url?: (string | null);
-    /**
-     * 关键帧图片 file_id（可选）
-     */
-    key_frame_file_id?: (string | null);
-    /**
-     * 关键帧图片 URL（可选）
-     */
-    key_frame_url?: (string | null);
-    /**
-     * 视频模型名称（可选）
-     */
-    model?: (string | null);
     /**
      * 分辨率（可选），如 720x1280
      */
     size?: (string | null);
-    /**
-     * 时长（秒）（可选）
-     */
-    seconds?: (number | null);
 };
 

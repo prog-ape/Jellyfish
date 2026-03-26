@@ -5,6 +5,7 @@ import {
   Card,
   Divider,
   Dropdown,
+  Image,
   Input,
   Layout,
   Modal,
@@ -1963,6 +1964,11 @@ function Inspector(props: {
   const [opsNoteDraft, setOpsNoteDraft] = useState('')
   const opsTitleSaveTimerRef = useRef<number | null>(null)
   const opsNoteSaveTimerRef = useRef<number | null>(null)
+  const [keyframePromptPreviewOpen, setKeyframePromptPreviewOpen] = useState(false)
+  const [keyframePromptPreviewLoading, setKeyframePromptPreviewLoading] = useState(false)
+  const [keyframePromptPreviewFrameType, setKeyframePromptPreviewFrameType] = useState<PromptFrameType>('key')
+  const [keyframePromptPreviewDraft, setKeyframePromptPreviewDraft] = useState('')
+  const [keyframePromptPreviewRefFileIds, setKeyframePromptPreviewRefFileIds] = useState<string[]>([])
   const [keyframeCards, setKeyframeCards] = useState<Record<PromptFrameType, KeyframeCardState>>({
     first: { loading: false, taskStatus: null, taskId: null, thumbs: [], modalOpen: false, applyingFileId: null },
     key: { loading: false, taskStatus: null, taskId: null, thumbs: [], modalOpen: false, applyingFileId: null },
@@ -2174,11 +2180,46 @@ function Inspector(props: {
       return
     }
 
+    try {
+      setKeyframePromptPreviewOpen(true)
+      setKeyframePromptPreviewLoading(true)
+      setKeyframePromptPreviewFrameType(frameType)
+      const rendered = await StudioImageTasksService.renderShotFramePromptApiV1StudioImageTasksShotShotIdFrameRenderPromptPost({
+        shotId: selectedShot.id,
+        requestBody: { frame_type: frameType, model_id: null } as any,
+      })
+      const d = rendered.data as any
+      setKeyframePromptPreviewDraft(typeof d?.prompt === 'string' ? d.prompt : '')
+      setKeyframePromptPreviewRefFileIds(Array.isArray(d?.images) ? (d.images as string[]).filter(Boolean) : [])
+    } catch {
+      message.error('获取提示词失败')
+    } finally {
+      setKeyframePromptPreviewLoading(false)
+    }
+  }
+
+  const confirmGenerateKeyframeWithPrompt = async () => {
+    if (!selectedShot?.id) {
+      message.warning('请先选择一个分镜')
+      return
+    }
+    const frameType = keyframePromptPreviewFrameType
+    const prompt = (keyframePromptPreviewDraft || '').trim()
+    if (!prompt) {
+      message.warning('请输入提示词')
+      return
+    }
+
     updateCardState(frameType, { loading: true, taskStatus: 'pending', taskId: null })
     try {
       const created = await StudioImageTasksService.createShotFrameImageGenerationTaskApiV1StudioImageTasksShotShotIdFrameImageTasksPost({
         shotId: selectedShot.id,
-        requestBody: { frame_type: frameType, model_id: null } as any,
+        requestBody: {
+          frame_type: frameType,
+          model_id: null,
+          prompt,
+          images: keyframePromptPreviewRefFileIds,
+        } as any,
       })
       const taskId = created.data?.task_id
       if (!taskId) {
@@ -2201,6 +2242,11 @@ function Inspector(props: {
       if (finalStatus === 'succeeded') {
         const latestSlotId = await getLatestFrameSlotId(frameType)
         await loadCardThumbs(frameType, latestSlotId, 5)
+        setKeyframePromptPreviewOpen(false)
+      } else if (finalStatus === 'failed' || finalStatus === 'cancelled') {
+        message.error(`${frameLabel[frameType]}生成失败`)
+      } else {
+        message.warning('生成任务仍在执行，请稍后刷新')
       }
     } catch {
       updateCardState(frameType, { taskStatus: 'failed' })
@@ -3018,6 +3064,56 @@ function Inspector(props: {
             },
           ]}
         />
+
+        <Modal
+          title="提示词内容预览"
+          open={keyframePromptPreviewOpen}
+          onCancel={() => setKeyframePromptPreviewOpen(false)}
+          okText="生成"
+          cancelText="取消"
+          onOk={() => void confirmGenerateKeyframeWithPrompt()}
+          confirmLoading={keyframeCards[keyframePromptPreviewFrameType].loading}
+          destroyOnClose
+          width={900}
+        >
+          {keyframePromptPreviewLoading ? (
+            <div className="py-8 text-center">
+              <Spin />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <div className="text-xs text-gray-500 mb-2">关联图片（参考图）</div>
+                {keyframePromptPreviewRefFileIds.length === 0 ? (
+                  <div className="text-xs text-gray-400">暂无关联图片</div>
+                ) : (
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    <Image.PreviewGroup>
+                      {keyframePromptPreviewRefFileIds.map((fid) => (
+                        <Image
+                          key={fid}
+                          width={72}
+                          height={72}
+                          style={{ objectFit: 'cover', borderRadius: 8 }}
+                          src={buildFileDownloadUrl(fid)}
+                        />
+                      ))}
+                    </Image.PreviewGroup>
+                  </div>
+                )}
+              </div>
+              <div>
+                <div className="text-xs text-gray-500 mb-2">提示词（可编辑）</div>
+                <Input.TextArea
+                  rows={10}
+                  value={keyframePromptPreviewDraft}
+                  onChange={(e) => setKeyframePromptPreviewDraft(e.target.value)}
+                  placeholder="请输入提示词…"
+                />
+              </div>
+            </div>
+          )}
+        </Modal>
       </div>
     </div>
   )
