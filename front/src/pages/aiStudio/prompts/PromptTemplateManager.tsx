@@ -406,7 +406,7 @@ const PromptTemplateManager: FC = () => {
                   </div>
                 )}
                 <div className="mt-3 flex gap-2">
-                  {selected.is_system && <Tag color="gold">系统提示词</Tag>}
+                  {selected.is_system && <Tag color="gold">系统预置</Tag>}
                   {selected.is_default && <Tag color="blue">默认提示词</Tag>}
                 </div>
               </Card>

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from abc import ABC, abstractmethod
@@ -36,6 +37,97 @@ def _extract_first_json_object(text: str) -> str | None:
         if start != -1 and end != -1 and end > start:
             return s[start : end + 1].strip()
     return None
+
+
+def _quote_unquoted_object_keys(text: str) -> str:
+    """为常见 JSON-like 输出补齐未加引号的对象键名。"""
+    pattern = re.compile(r'([{,]\s*)([A-Za-z_][A-Za-z0-9_-]*)(\s*:)')
+    return pattern.sub(r'\1"\2"\3', text)
+
+
+def _replace_json_literals_for_python(text: str) -> str:
+    """将 JSON 字面量替换为 Python 字面量，便于 ast.literal_eval 解析。"""
+    text = re.sub(r"(?<=[:\[,{\s])true(?=[,\]}\s])", "True", text)
+    text = re.sub(r"(?<=[:\[,{\s])false(?=[,\]}\s])", "False", text)
+    text = re.sub(r"(?<=[:\[,{\s])null(?=[,\]}\s])", "None", text)
+    return text
+
+
+def _repair_json_like(text: str) -> str:
+    """修复 LLM 常见 JSON 格式问题。"""
+    repaired = text.strip()
+    repaired = repaired.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+    repaired = _quote_unquoted_object_keys(repaired)
+    # 去除尾逗号：{"a":1,} / [1,2,]
+    repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+    return repaired
+
+
+def _parse_python_call_kwargs(text: str) -> dict[str, Any] | None:
+    """解析 `Foo(a=1, b='x')` / `dict(a=1)` 这类 kwargs 风格输出。"""
+    try:
+        expr = ast.parse(text, mode="eval")
+    except Exception:
+        return None
+    body = expr.body
+    if not isinstance(body, ast.Call) or body.args:
+        return None
+
+    parsed: dict[str, Any] = {}
+    for kw in body.keywords:
+        if kw.arg is None:
+            return None
+        try:
+            parsed[kw.arg] = ast.literal_eval(kw.value)
+        except Exception:
+            return None
+    return parsed
+
+
+def _load_json_like(text: str) -> Any:
+    """尽量解析 LLM 返回的 JSON / JSON-like 文本。"""
+
+    candidates: list[str] = []
+    stripped = text.strip()
+    if stripped:
+        candidates.append(stripped)
+    first_obj = _extract_first_json_object(stripped)
+    if first_obj and first_obj != stripped:
+        candidates.append(first_obj)
+
+    last_error: Exception | None = None
+    preferred_error: Exception | None = None
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except Exception as e:
+            last_error = e
+            if preferred_error is None:
+                preferred_error = e
+
+        repaired = _repair_json_like(candidate)
+        try:
+            return json.loads(repaired)
+        except Exception as e:
+            last_error = e
+            if preferred_error is None:
+                preferred_error = e
+
+        python_like = _replace_json_literals_for_python(repaired)
+        try:
+            return ast.literal_eval(python_like)
+        except Exception as e:
+            last_error = e
+
+        call_kwargs = _parse_python_call_kwargs(python_like)
+        if call_kwargs is not None:
+            return call_kwargs
+
+    if preferred_error is not None:
+        raise ValueError("Failed to parse LLM output as JSON-like text") from preferred_error
+    if last_error is not None:
+        raise ValueError("Failed to parse LLM output as JSON-like text") from last_error
+    raise ValueError("Empty output from LLM")
 
 
 class AgentBase(ABC, Generic[T]):
@@ -102,6 +194,47 @@ class AgentBase(ABC, Generic[T]):
                 f"需要: {list(prompt.input_variables)}"
             ) from e
 
+    def _as_messages_input(self, **kwargs: Any) -> dict[str, Any]:
+        """将 kwargs 渲染为 LangChain agent 所需的 messages 输入形状。"""
+        return {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": self._render_user_prompt(**kwargs),
+                }
+            ]
+        }
+
+    @staticmethod
+    def _last_message_content(state: Any) -> str:
+        """
+        从 create_agent 返回的 state 中提取最后一条消息的 content。
+        若不是标准 state，则尽量退化为 str(state)。
+        """
+        if isinstance(state, dict):
+            messages = state.get("messages")
+            if isinstance(messages, list) and messages:
+                last = messages[-1]
+                # 兼容 dict message 与 BaseMessage
+                if isinstance(last, dict):
+                    content = last.get("content")
+                    if content is not None:
+                        return str(content)
+                if hasattr(last, "content"):
+                    return str(getattr(last, "content"))
+        if hasattr(state, "content"):
+            return str(getattr(state, "content"))
+        return str(state)
+
+    def _extract_structured_response(self, state: Any) -> Any:
+        """
+        从 create_agent 返回的 state 中提取 structured_response。
+        LangChain 文档约定：structured response 放在 state['structured_response']。
+        """
+        if isinstance(state, dict) and "structured_response" in state:
+            return state.get("structured_response")
+        return state
+
     def create_agent(self, *, structured_output: type[BaseModel] | None = None) -> Runnable:
         """
         生成可执行 runnable：
@@ -109,9 +242,6 @@ class AgentBase(ABC, Generic[T]):
         - structured_output 不为 None 时，通过 `response_format=ToolStrategy(structured_output)` 让模型输出结构化结果
         - 若当前环境未安装 langchain，则降级为：RunnableLambda(render_user_prompt) | model（structured 时用 with_structured_output）
         """
-
-        def _render_input(inputs: dict[str, Any]) -> dict[str, Any]:
-            return {"input": self._render_user_prompt(**inputs)}
 
         # --- preferred path: langchain create_agent + ToolStrategy ---
         try:
@@ -125,7 +255,8 @@ class AgentBase(ABC, Generic[T]):
                 system_prompt=(self.system_prompt or ""),
                 **kwargs,
             )
-            return RunnableLambda(_render_input) | cast(Runnable, agent)
+            # create_agent 接受 {"messages": [...]} 作为输入
+            return RunnableLambda(lambda inputs: self._as_messages_input(**inputs)) | cast(Runnable, agent)
         except Exception:
             # --- fallback path: no langchain available ---
             llm: Runnable = cast(Runnable, self._model)
@@ -159,29 +290,19 @@ class AgentBase(ABC, Generic[T]):
         """调用 agent，返回原始字符串（通常为 JSON）。"""
         chain: Runnable = self.create_agent()
         result = chain.invoke(kwargs)
-        if hasattr(result, "content"):
-            return getattr(result, "content", str(result))
-        return str(result)
+        return self._last_message_content(result)
 
     async def arun(self, **kwargs: Any) -> str:
         """异步调用 agent。"""
         chain: Runnable = self.create_agent()
         result = await chain.ainvoke(kwargs)
-        if hasattr(result, "content"):
-            return getattr(result, "content", str(result))
-        return str(result)
+        return self._last_message_content(result)
 
     def format_output(self, raw: str) -> T:
         """将 agent 原始输出解析为结构化结果（JSON → 规范化 → Pydantic）。"""
         output_model = self.output_model
         json_str = _extract_json_from_text(raw)
-        try:
-            data = json.loads(json_str)
-        except Exception:
-            candidate = _extract_first_json_object(json_str)
-            if candidate is None:
-                raise
-            data = json.loads(candidate)
+        data = _load_json_like(json_str)
         if isinstance(data, dict):
             data = self._normalize(data)
         return output_model.model_validate(data)
@@ -191,7 +312,8 @@ class AgentBase(ABC, Generic[T]):
         chain = self._get_structured_chain()
         if chain is not None:
             try:
-                result = chain.invoke(kwargs)
+                state = chain.invoke(kwargs)
+                result = self._extract_structured_response(state)
                 if isinstance(result, self.output_model):
                     return cast(T, result)
                 if isinstance(result, dict):
@@ -206,7 +328,8 @@ class AgentBase(ABC, Generic[T]):
         chain = self._get_structured_chain()
         if chain is not None:
             try:
-                result = await chain.ainvoke(kwargs)
+                state = await chain.ainvoke(kwargs)
+                result = self._extract_structured_response(state)
                 if isinstance(result, self.output_model):
                     return cast(T, result)
                 if isinstance(result, dict):

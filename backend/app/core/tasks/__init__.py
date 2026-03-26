@@ -1,6 +1,5 @@
 """Tasks for the skills runtime."""
 
-from app.core.tasks.extra_tasks import FilmEntityExtractionTask, FilmShotlistTask
 from app.core.tasks.video_generation_tasks import (
     ProviderConfig,
     VideoGenerationInput,
@@ -19,8 +18,6 @@ from app.core.tasks.agent_tasks import (
 )
 
 __all__ = [
-    "FilmEntityExtractionTask",
-    "FilmShotlistTask",
     "ProviderConfig",
     "VideoGenerationInput",
     "VideoGenerationResult",
