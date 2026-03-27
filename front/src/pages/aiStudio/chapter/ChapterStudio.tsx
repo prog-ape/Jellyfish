@@ -26,7 +26,6 @@ import {
   ArrowLeftOutlined,
   CaretLeftOutlined,
   CaretRightOutlined,
-  BulbOutlined,
   CameraOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
@@ -1952,9 +1951,6 @@ function Inspector(props: {
   const [relatedShotId, setRelatedShotId] = useState<string | undefined>(undefined)
   const [newDialogText, setNewDialogText] = useState('')
   const [creatingDialog, setCreatingDialog] = useState(false)
-  const [imagePromptTab, setImagePromptTab] = useState<'head' | 'mid' | 'tail'>('mid')
-  const [imagePromptGenerating, setImagePromptGenerating] = useState(false)
-  const [imagePromptTaskStatus, setImagePromptTaskStatus] = useState<string | null>(null)
   const [videoPromptFrameType, setVideoPromptFrameType] = useState<PromptFrameType>('key')
   const [videoPromptGenerating, setVideoPromptGenerating] = useState(false)
   const [inspectorTabKey, setInspectorTabKey] = useState('camera')
@@ -1966,6 +1962,7 @@ function Inspector(props: {
   const opsNoteSaveTimerRef = useRef<number | null>(null)
   const [keyframePromptPreviewOpen, setKeyframePromptPreviewOpen] = useState(false)
   const [keyframePromptPreviewLoading, setKeyframePromptPreviewLoading] = useState(false)
+  const [keyframePromptActionLoading, setKeyframePromptActionLoading] = useState(false)
   const [keyframePromptPreviewFrameType, setKeyframePromptPreviewFrameType] = useState<PromptFrameType>('key')
   const [keyframePromptPreviewDraft, setKeyframePromptPreviewDraft] = useState('')
   const [keyframePromptPreviewRefFileIds, setKeyframePromptPreviewRefFileIds] = useState<string[]>([])
@@ -2105,7 +2102,6 @@ function Inspector(props: {
   }
 
   const frameLabel: Record<PromptFrameType, string> = { first: '首帧', key: '关键帧', last: '尾帧' }
-  const promptTabByFrame: Record<PromptFrameType, 'head' | 'mid' | 'tail'> = { first: 'head', key: 'mid', last: 'tail' }
   const promptByFrame: Record<PromptFrameType, string> = {
     first: shotDetail?.first_frame_prompt ?? '',
     key: shotDetail?.key_frame_prompt ?? '',
@@ -2176,14 +2172,30 @@ function Inspector(props: {
     if (!promptByFrame[frameType].trim()) {
       message.warning(`请先在画面描述中填写${frameLabel[frameType]}提示词`)
       setInspectorTabKey('prompt_image')
-      setImagePromptTab(promptTabByFrame[frameType])
       return
     }
 
     try {
       setKeyframePromptPreviewOpen(true)
-      setKeyframePromptPreviewLoading(true)
       setKeyframePromptPreviewFrameType(frameType)
+      setKeyframePromptPreviewDraft(getPromptFromDetailByType(frameType))
+      setKeyframePromptPreviewRefFileIds([])
+    } catch {
+      message.error('获取提示词失败')
+    } finally {
+      setKeyframePromptPreviewLoading(false)
+    }
+  }
+
+  const regenerateKeyframePrompt = async () => {
+    if (!selectedShot?.id) {
+      message.warning('请先选择一个分镜')
+      return
+    }
+    const frameType = keyframePromptPreviewFrameType
+    setKeyframePromptActionLoading(true)
+    setKeyframePromptPreviewLoading(true)
+    try {
       const rendered = await StudioImageTasksService.renderShotFramePromptApiV1StudioImageTasksShotShotIdFrameRenderPromptPost({
         shotId: selectedShot.id,
         requestBody: { frame_type: frameType, model_id: null } as any,
@@ -2191,10 +2203,42 @@ function Inspector(props: {
       const d = rendered.data as any
       setKeyframePromptPreviewDraft(typeof d?.prompt === 'string' ? d.prompt : '')
       setKeyframePromptPreviewRefFileIds(Array.isArray(d?.images) ? (d.images as string[]).filter(Boolean) : [])
+      message.success('提示词已生成')
     } catch {
-      message.error('获取提示词失败')
+      message.error('生成提示词失败')
     } finally {
       setKeyframePromptPreviewLoading(false)
+      setKeyframePromptActionLoading(false)
+    }
+  }
+
+  const saveKeyframePrompt = async () => {
+    if (!selectedShot?.id) {
+      message.warning('请先选择一个分镜')
+      return
+    }
+    const frameType = keyframePromptPreviewFrameType
+    const prompt = keyframePromptPreviewDraft.trim()
+    const currentPrompt = getPromptFromDetailByType(frameType).trim()
+    if (!prompt) {
+      message.warning('请输入提示词')
+      return
+    }
+    if (prompt === currentPrompt) return
+    setKeyframePromptActionLoading(true)
+    try {
+      if (frameType === 'first') {
+        await onPatchShotDetailImmediate({ first_frame_prompt: prompt })
+      } else if (frameType === 'last') {
+        await onPatchShotDetailImmediate({ last_frame_prompt: prompt })
+      } else {
+        await onPatchShotDetailImmediate({ key_frame_prompt: prompt })
+      }
+      message.success('提示词已保存')
+    } catch {
+      message.error('保存提示词失败')
+    } finally {
+      setKeyframePromptActionLoading(false)
     }
   }
 
@@ -2210,6 +2254,7 @@ function Inspector(props: {
       return
     }
 
+    setKeyframePromptActionLoading(true)
     updateCardState(frameType, { loading: true, taskStatus: 'pending', taskId: null })
     try {
       const created = await StudioImageTasksService.createShotFrameImageGenerationTaskApiV1StudioImageTasksShotShotIdFrameImageTasksPost({
@@ -2253,6 +2298,7 @@ function Inspector(props: {
       message.error(`${frameLabel[frameType]}生成失败`)
     } finally {
       updateCardState(frameType, { loading: false })
+      setKeyframePromptActionLoading(false)
     }
   }
 
@@ -2332,68 +2378,6 @@ function Inspector(props: {
       message.error('发起视频提示词生成失败')
     } finally {
       setVideoPromptGenerating(false)
-    }
-  }
-
-  const handleGenerateImagePrompt = async () => {
-    if (!selectedShot?.id) {
-      message.warning('请先选择一个分镜')
-      return
-    }
-    if (!shotDetail) return
-
-    const frameType: PromptFrameType = imagePromptTab === 'head' ? 'first' : imagePromptTab === 'tail' ? 'last' : 'key'
-    setImagePromptGenerating(true)
-    setImagePromptTaskStatus('pending')
-    try {
-      const created = await FilmService.createShotFramePromptTaskApiV1FilmTasksShotFramePromptsPost({
-        requestBody: {
-          shot_id: selectedShot.id,
-          frame_type: frameType,
-        },
-      })
-      const taskId = created.data?.task_id
-      if (!taskId) {
-        message.error('生成任务创建失败：缺少任务 ID')
-        return
-      }
-
-      let finalStatus = 'pending'
-      for (let i = 0; i < 30; i += 1) {
-        await sleep(2000)
-        const statusRes = await FilmService.getTaskStatusApiV1FilmTasksTaskIdStatusGet({ taskId })
-        const status = statusRes.data?.status
-        if (!status) continue
-        finalStatus = status
-        setImagePromptTaskStatus(status)
-        if (status === 'succeeded' || status === 'failed' || status === 'cancelled') break
-      }
-
-      if (finalStatus === 'succeeded') {
-        const resultRes = await FilmService.getTaskResultApiV1FilmTasksTaskIdResultGet({ taskId })
-        const result = (resultRes.data?.result ?? null) as Record<string, unknown> | null
-        const prompt = typeof result?.prompt === 'string' ? result.prompt : ''
-        if (!prompt.trim()) {
-          message.warning('生成完成，但未返回提示词')
-          return
-        }
-        patchPromptToDetailByType(frameType, prompt)
-        setImagePromptTaskStatus('succeeded')
-        message.success('图片提示词已生成')
-        return
-      }
-      if (finalStatus === 'failed' || finalStatus === 'cancelled') {
-        setImagePromptTaskStatus(finalStatus)
-        message.error('图片提示词生成失败')
-      } else {
-        setImagePromptTaskStatus(finalStatus)
-        message.warning('生成任务仍在执行，请稍后重试')
-      }
-    } catch {
-      setImagePromptTaskStatus('failed')
-      message.error('发起图片提示词生成失败')
-    } finally {
-      setImagePromptGenerating(false)
     }
   }
 
@@ -2717,81 +2701,6 @@ function Inspector(props: {
               ),
             },
             {
-              key: 'image_prompts',
-              label: '图片提示词',
-              children: (
-                <div className="cs-group">
-                  <div className="cs-group-title">
-                    <BulbOutlined /> 图片提示词
-                  </div>
-                  <div className="cs-hint">建议按“首/中/尾”分开维护，方便版本对比与迭代。</div>
-                  <div className="mt-3">
-                    <Tabs
-                      size="small"
-                      activeKey={imagePromptTab}
-                      onChange={(k) => setImagePromptTab(k as 'head' | 'mid' | 'tail')}
-                      items={[
-                        {
-                          key: 'head',
-                          label: '首',
-                          children: (
-                            <Spin spinning={imagePromptGenerating && imagePromptTab === 'head'} size="small">
-                              <TextArea
-                                rows={3}
-                                className="font-mono text-xs"
-                                placeholder="首帧提示词…"
-                                value={shotDetail?.first_frame_prompt ?? ''}
-                                disabled={imagePromptGenerating && imagePromptTab === 'head'}
-                                onChange={(e) => onPatchShotDetail({ first_frame_prompt: e.target.value })}
-                              />
-                            </Spin>
-                          ),
-                        },
-                        {
-                          key: 'mid',
-                          label: '中',
-                          children: (
-                            <Spin spinning={imagePromptGenerating && imagePromptTab === 'mid'} size="small">
-                              <TextArea
-                                rows={3}
-                                className="font-mono text-xs"
-                                placeholder="关键帧提示词…"
-                                value={shotDetail?.key_frame_prompt ?? ''}
-                                disabled={imagePromptGenerating && imagePromptTab === 'mid'}
-                                onChange={(e) => onPatchShotDetail({ key_frame_prompt: e.target.value })}
-                              />
-                            </Spin>
-                          ),
-                        },
-                        {
-                          key: 'tail',
-                          label: '尾',
-                          children: (
-                            <Spin spinning={imagePromptGenerating && imagePromptTab === 'tail'} size="small">
-                              <TextArea
-                                rows={3}
-                                className="font-mono text-xs"
-                                placeholder="尾帧提示词…"
-                                value={shotDetail?.last_frame_prompt ?? ''}
-                                disabled={imagePromptGenerating && imagePromptTab === 'tail'}
-                                onChange={(e) => onPatchShotDetail({ last_frame_prompt: e.target.value })}
-                              />
-                            </Spin>
-                          ),
-                        },
-                      ]}
-                    />
-                    <Space className="mt-3" wrap>
-                      <Button size="small" type="primary" icon={<ThunderboltOutlined />} loading={imagePromptGenerating} onClick={handleGenerateImagePrompt}>
-                        生成
-                      </Button>
-                      {imagePromptTaskStatus ? <span className="text-xs text-gray-500">任务状态：{imagePromptTaskStatus}</span> : null}
-                    </Space>
-                  </div>
-                </div>
-              ),
-            },
-            {
               key: 'prompt_video',
               label: '视频提示词',
               children: (
@@ -3066,13 +2975,41 @@ function Inspector(props: {
         />
 
         <Modal
-          title="提示词内容预览"
+          title={`${frameLabel[keyframePromptPreviewFrameType]}图片生成提示词预览`}
           open={keyframePromptPreviewOpen}
-          onCancel={() => setKeyframePromptPreviewOpen(false)}
-          okText="生成"
-          cancelText="取消"
-          onOk={() => void confirmGenerateKeyframeWithPrompt()}
-          confirmLoading={keyframeCards[keyframePromptPreviewFrameType].loading}
+          onCancel={() => {
+            if (keyframePromptActionLoading) return
+            setKeyframePromptPreviewOpen(false)
+          }}
+          footer={(
+            <div className="flex items-center justify-between">
+              <Button
+                loading={keyframePromptActionLoading}
+                onClick={() => void regenerateKeyframePrompt()}
+              >
+                {getPromptFromDetailByType(keyframePromptPreviewFrameType).trim() ? '重新生成提示词' : '生成提示词'}
+              </Button>
+              <Space>
+                <Button
+                  loading={keyframePromptActionLoading}
+                  onClick={() => {
+                    if (keyframePromptActionLoading) return
+                    setKeyframePromptPreviewOpen(false)
+                  }}
+                >
+                  取消
+                </Button>
+                {keyframePromptPreviewDraft.trim() !== getPromptFromDetailByType(keyframePromptPreviewFrameType).trim() && (
+                  <Button loading={keyframePromptActionLoading} onClick={() => void saveKeyframePrompt()}>
+                    保存
+                  </Button>
+                )}
+                <Button type="primary" loading={keyframePromptActionLoading} onClick={() => void confirmGenerateKeyframeWithPrompt()}>
+                  生成
+                </Button>
+              </Space>
+            </div>
+          )}
           destroyOnClose
           width={900}
         >
@@ -3109,6 +3046,7 @@ function Inspector(props: {
                   value={keyframePromptPreviewDraft}
                   onChange={(e) => setKeyframePromptPreviewDraft(e.target.value)}
                   placeholder="请输入提示词…"
+                  disabled={keyframePromptActionLoading}
                 />
               </div>
             </div>
