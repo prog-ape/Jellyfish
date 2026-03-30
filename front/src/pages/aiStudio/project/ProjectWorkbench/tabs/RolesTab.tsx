@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Card, Button, Empty, Modal, Input, message, Space, Select } from 'antd'
+import { Card, Button, Empty, Modal, Input, message, Space, Select, Pagination } from 'antd'
 import { PlusOutlined, UserOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
 import { StudioProjectsService, StudioShotLinksService } from '../../../../../services/generated'
@@ -180,6 +180,17 @@ export function RolesTab() {
     })
   }, [actorsById, characters, costumesById])
 
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(12)
+  const pagedRoleCards = useMemo(() => {
+    const start = (page - 1) * pageSize
+    return roleCards.slice(start, start + pageSize)
+  }, [page, pageSize, roleCards])
+
+  useEffect(() => {
+    setPage(1)
+  }, [roleCards.length])
+
   const actorOptions = useMemo(() => {
     return projectActorLinks.map((l) => {
       const a = actorsById[l.actor_id]
@@ -215,7 +226,7 @@ export function RolesTab() {
   }
 
   return (
-    <>
+    <div className="h-full overflow-auto">
       <Card
         title="项目角色"
         extra={
@@ -258,8 +269,9 @@ export function RolesTab() {
             </Space>
           </Empty>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {roleCards.map(({ c, actor, costume }) => (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {pagedRoleCards.map(({ c, actor, costume }) => (
               <DisplayImageCard
                 key={c.id}
                 title={<div className="truncate">{c.name}</div>}
@@ -315,6 +327,20 @@ export function RolesTab() {
                 }
               />
             ))}
+            </div>
+            <div className="flex justify-end">
+              <Pagination
+                current={page}
+                pageSize={pageSize}
+                total={roleCards.length}
+                showSizeChanger={false}
+                showTotal={(t) => `共 ${t} 条`}
+                onChange={(p, ps) => {
+                  setPage(p)
+                  setPageSize(ps)
+                }}
+              />
+            </div>
           </div>
         )}
       </Card>
@@ -369,6 +395,6 @@ export function RolesTab() {
           </div>
         </div>
       </Modal>
-    </>
+    </div>
   )
 }

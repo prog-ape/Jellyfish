@@ -13,7 +13,7 @@ export function ActorsTab() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(6)
+  const [pageSize, setPageSize] = useState(12)
   const [total, setTotal] = useState(0)
 
   const [editOpen, setEditOpen] = useState(false)
