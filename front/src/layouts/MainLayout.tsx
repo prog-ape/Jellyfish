@@ -59,6 +59,11 @@ const MainLayout: React.FC = () => {
       edit: '编辑',
     }
     path.forEach((segment, i) => {
+      // 特殊：/projects/:projectId/chapters/:chapterId/* 中的 chapterId 段不展示（避免出现“章节”这一层）
+      if (path[0] === 'projects' && path[2] === 'chapters' && i === 3) {
+        return
+      }
+
       // 默认：按原始路径逐段拼接
       let href = path.slice(0, i + 1).join('/')
       href = `/${href}`
@@ -70,7 +75,7 @@ const MainLayout: React.FC = () => {
         const chapterId = path[3]
         if (segment === 'chapters' && i === 2) {
           // “章节管理”实际在项目工作台页
-          href = `/projects/${projectId}`
+          href = `/projects/${projectId}?tab=chapters`
         } else if (i === 3) {
           // 章节 ID 段没有对应独立页面，跳到拍摄准备（存在路由）
           href = `/projects/${projectId}/chapters/${chapterId}/prep`

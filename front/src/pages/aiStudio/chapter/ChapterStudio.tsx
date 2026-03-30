@@ -1250,7 +1250,7 @@ const ChapterStudio: React.FC = () => {
         <div className="flex items-center gap-2 min-w-0">
           {projectId && (
             <Link
-              to={`/projects/${projectId}/chapters`}
+              to={`/projects/${projectId}?tab=chapters`}
               className="text-sm text-gray-600 hover:text-blue-600 flex items-center gap-1 shrink-0"
             >
               <ArrowLeftOutlined /> 返回
