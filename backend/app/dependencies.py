@@ -7,8 +7,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_maker
-from app.models.llm import ModelCategoryKey
-from app.services.llm.resolver import get_default_model_by_category, get_provider_by_model_or_id
+from app.services.llm.resolver import build_default_text_llm
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -25,64 +24,12 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def get_llm(db: AsyncSession = Depends(get_db)) -> BaseChatModel:
-    """提供默认文本 LLM（ChatOpenAI），从数据库读取默认文本模型；未配置则抛出 503。"""
-    model = await get_default_model_by_category(db, ModelCategoryKey.text)
-    provider = await get_provider_by_model_or_id(db, model)
-
-    api_key = (provider.api_key or "").strip()
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Provider api_key is empty for provider_id={provider.id}",
-        )
-    try:
-        from langchain_openai import ChatOpenAI
-    except ImportError as e:
-        raise HTTPException(
-            status_code=503,
-            detail="Install langchain-openai (e.g. uv sync --group dev) to use film extraction endpoints",
-        ) from e
-
-    kwargs: dict = dict(model.params or {})
-    kwargs["model"] = model.name
-    kwargs["api_key"] = api_key
-    kwargs.setdefault("temperature", 0)
-    base_url = (provider.base_url or "").strip()
-    if base_url:
-        kwargs.setdefault("base_url", base_url)
-    return ChatOpenAI(**kwargs)
+    """提供默认文本 LLM（ChatOpenAI）。"""
+    return await build_default_text_llm(db, thinking=True)
 
 async def get_nothinking_llm(db: AsyncSession = Depends(get_db)) -> BaseChatModel:
-    """提供默认文本 LLM（ChatOpenAI，禁用 thinking），从数据库读取默认文本模型；未配置则抛出 503。"""
-    model = await get_default_model_by_category(db, ModelCategoryKey.text)
-    provider = await get_provider_by_model_or_id(db, model)
-
-    api_key = (provider.api_key or "").strip()
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Provider api_key is empty for provider_id={provider.id}",
-        )
-    try:
-        from langchain_openai import ChatOpenAI
-    except ImportError as e:
-        raise HTTPException(
-            status_code=503,
-            detail="Install langchain-openai (e.g. uv sync --group dev) to use film extraction endpoints",
-        ) from e
-
-    kwargs: dict = dict(model.params or {})
-    kwargs["model"] = model.name
-    kwargs["api_key"] = api_key
-    kwargs.setdefault("temperature", 0)
-    base_url = (provider.base_url or "").strip()
-    if base_url:
-        kwargs.setdefault("base_url", base_url)
-
-    extra_body = dict(kwargs.get("extra_body") or {})
-    extra_body["enable_thinking"] = False
-    kwargs["extra_body"] = extra_body
-    return ChatOpenAI(**kwargs)
+    """提供默认文本 LLM（ChatOpenAI，禁用 thinking）。"""
+    return await build_default_text_llm(db, thinking=False)
 
 
 class _ImageHttpRunnable:

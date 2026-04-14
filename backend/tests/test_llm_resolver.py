@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.db import Base
 from app.models.llm import Model, ModelCategoryKey, ModelSettings, Provider
 from app.services.llm import (
+    build_default_text_llm,
     build_chat_model_from_provider,
     get_default_model_by_category,
     get_model_by_category,
@@ -139,6 +140,46 @@ async def test_build_chat_model_from_provider_builds_chatopenai_with_model_param
         assert chat_model.kwargs["base_url"] == "https://api.openai.com/v1"
         assert chat_model.kwargs["temperature"] == 0.2
         assert chat_model.kwargs["max_tokens"] == 256
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_build_default_text_llm_supports_thinking_toggle(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):  # noqa: ANN003, ANN204
+            self.kwargs = kwargs
+
+    fake_module = types.ModuleType("langchain_openai")
+    fake_module.ChatOpenAI = FakeChatOpenAI
+    monkeypatch.setitem(sys.modules, "langchain_openai", fake_module)
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+    session_local = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with session_local() as db:
+        provider = Provider(id="p1", name="OpenAI", base_url="https://api.openai.com/v1", api_key="k")
+        model = Model(
+            id="m_text",
+            name="gpt-4o-mini",
+            category=ModelCategoryKey.text,
+            provider_id="p1",
+            is_default=True,
+            params={"temperature": 0.2},
+        )
+        settings = ModelSettings(id=1, default_text_model_id="m_text")
+        db.add_all([provider, model, settings])
+        await db.commit()
+
+        thinking_llm = await build_default_text_llm(db, thinking=True)
+        nothinking_llm = await build_default_text_llm(db, thinking=False)
+
+        assert isinstance(thinking_llm, FakeChatOpenAI)
+        assert "extra_body" not in thinking_llm.kwargs
+        assert isinstance(nothinking_llm, FakeChatOpenAI)
+        assert nothinking_llm.kwargs["extra_body"]["enable_thinking"] is False
 
     await engine.dispose()
 

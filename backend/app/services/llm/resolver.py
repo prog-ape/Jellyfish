@@ -136,6 +136,37 @@ async def build_chat_model_from_provider(
             detail=f"No text model configured for provider_id={provider.id}",
         )
 
+    return _build_chat_openai_model(
+        provider=provider,
+        model=model,
+        thinking=True,
+        import_error_detail="Install langchain-openai to build chat model from provider config",
+    )
+
+
+async def build_default_text_llm(
+    db: AsyncSession,
+    *,
+    thinking: bool,
+) -> BaseChatModel:
+    """基于默认文本模型构造 ChatOpenAI。"""
+    model = await get_default_model_by_category(db, ModelCategoryKey.text)
+    provider = await get_provider_by_model_or_id(db, model)
+    return _build_chat_openai_model(
+        provider=provider,
+        model=model,
+        thinking=thinking,
+        import_error_detail="Install langchain-openai (e.g. uv sync --group dev) to use film extraction endpoints",
+    )
+
+
+def _build_chat_openai_model(
+    *,
+    provider: Provider,
+    model: Model,
+    thinking: bool,
+    import_error_detail: str,
+) -> BaseChatModel:
     api_key = (provider.api_key or "").strip()
     if not api_key:
         raise HTTPException(
@@ -148,7 +179,7 @@ async def build_chat_model_from_provider(
     except ImportError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Install langchain-openai to build chat model from provider config",
+            detail=import_error_detail,
         ) from e
 
     kwargs: dict[str, Any] = dict(model.params or {})
@@ -159,5 +190,10 @@ async def build_chat_model_from_provider(
     base_url = resolve_effective_base_url(provider=provider, category=ModelCategoryKey.text)
     if base_url:
         kwargs.setdefault("base_url", base_url)
+
+    if not thinking:
+        extra_body = dict(kwargs.get("extra_body") or {})
+        extra_body["enable_thinking"] = False
+        kwargs["extra_body"] = extra_body
 
     return ChatOpenAI(**kwargs)
